@@ -1,0 +1,345 @@
+<!-- <!doctype html>
+<html>
+    <head>
+        <title>Iroh browser echo demo</title>
+        <script src="./main.js" type="module"></script>
+        <link rel="stylesheet" href="./style.css" />
+    </head>
+
+    <body>
+        <header>
+            <h1>
+                iroh in the browser
+            </h1>
+            This example runs iroh in the browser, compiled to web assembly. The example uses a custom <i>Echo protocol</i>: You connect to remote node, send some data, and the remote node sends back the same data.
+            The protocol may be used both from the browser and from the command line, and browser and cli nodes can connect to each other.
+            <br>
+            <a href="https://github.com/n0-computer/iroh-examples/tree/main/browser-echo" target="_blank">
+                Source code
+            </a>
+        </header>
+        <main></main>
+        <div class="spawned" style="display:none">
+        <form id="connect">
+            <h3>connect to another node</h3>
+            <div class="fields">
+                <div>
+                <label for="node-id">node id to connect to:</label>
+                <input name="node-id" placeholder="node id" />
+                </div>
+                <div>
+                <label for="payload">text to send to the node:</label>
+                <input name="payload" placeholder="string to send" />
+                </div>
+            </div>
+            <div>
+            <button type="submit">connect</button>
+            </div>
+          </form>
+        <div id="outgoing" class="connections"">
+            <h2>outgoing connections</h2>
+        </div>
+        <div id="incoming" class="connections"">
+            <h2>incoming connections</h2>
+        </div>
+        </div>
+    </body>
+</html> -->
+
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ermis Call Demo</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px;
+    }
+    
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      overflow: hidden;
+    }
+    
+    header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 30px;
+      text-align: center;
+    }
+    
+    h1 {
+      font-size: 2em;
+      margin-bottom: 10px;
+    }
+    
+    main {
+      padding: 30px;
+      /* max-height: 500px; */
+      overflow-y: auto;
+    }
+    
+    .spawned {
+      display: none;
+    }
+    
+    .section {
+      margin-bottom: 30px;
+      padding: 20px;
+      background: #f8f9fa;
+      border-radius: 8px;
+    }
+    
+    h2 {
+      color: #667eea;
+      margin-bottom: 15px;
+      font-size: 1.3em;
+    }
+    
+    form {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+    
+    input[type="text"] {
+      flex: 1;
+      min-width: 200px;
+      padding: 12px;
+      border: 2px solid #e0e0e0;
+      border-radius: 6px;
+      font-size: 14px;
+      transition: border-color 0.3s;
+    }
+    
+    input[type="text"]:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+    
+    button {
+      padding: 12px 24px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+    
+    button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    }
+    
+    button:active {
+      transform: translateY(0);
+    }
+    
+    #send-data {
+      display: none;
+    }
+    
+    .controls {
+      display: flex;
+      gap: 10px;
+      margin-top: 15px;
+    }
+    
+    .controls button {
+      flex: 1;
+    }
+    
+    #start-dummy {
+      background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+    }
+    
+    #stop-dummy {
+      background: linear-gradient(135deg, #ee0979 0%, #ff6a00 100%);
+    }
+    
+    .time {
+      color: #999;
+      font-size: 0.85em;
+    }
+    
+    .cmd {
+      background: #2d3748;
+      color: #48bb78;
+      padding: 10px;
+      border-radius: 6px;
+      font-family: 'Courier New', monospace;
+      margin: 5px 0;
+      overflow-x: auto;
+    }
+    
+    .error {
+      color: #e53e3e;
+      background: #fff5f5;
+      padding: 8px;
+      border-radius: 4px;
+      border-left: 4px solid #e53e3e;
+    }
+    
+    .success {
+      color: #38a169;
+      background: #f0fff4;
+      padding: 8px;
+      border-radius: 4px;
+      border-left: 4px solid #38a169;
+    }
+    
+    .info {
+      color: #3182ce;
+      background: #ebf8ff;
+      padding: 8px;
+      border-radius: 4px;
+      border-left: 4px solid #3182ce;
+    }
+    
+    .node {
+      margin: 15px 0;
+      padding: 15px;
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    
+    .node h3 {
+      color: #764ba2;
+      font-size: 0.9em;
+      margin-bottom: 10px;
+      word-break: break-all;
+    }
+    
+    #stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+      margin-top: 15px;
+    }
+    
+    .stat-item {
+      background: white;
+      padding: 15px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      text-align: center;
+      font-weight: 600;
+      color: #667eea;
+    }
+    
+    a {
+      color: #667eea;
+      text-decoration: none;
+      font-weight: 600;
+    }
+    
+    a:hover {
+      text-decoration: underline;
+    }
+    
+    ::-webkit-scrollbar {
+      width: 8px;
+    }
+    
+    ::-webkit-scrollbar-track {
+      background: #f1f1f1;
+    }
+    
+    ::-webkit-scrollbar-thumb {
+      background: #667eea;
+      border-radius: 4px;
+    }
+    
+    ::-webkit-scrollbar-thumb:hover {
+      background: #764ba2;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🚀 Ermis Call Demo</h1>
+      <p>P2P Communication with Iroh</p>
+    </header>
+    
+    <main>
+      <div class="spawned">
+        <div class="section">
+          <h2>📡 Connection Stats</h2>
+          <div id="stats">
+            <div class="stat-item">Initializing...</div>
+          </div>
+        </div>
+        
+        <div class="section">
+          <h2>🔗 Connect to Peer</h2>
+          <form id="connect">
+            <input 
+              type="text" 
+              name="endpoint-id" 
+              placeholder="Peer endpoint address (base64)"
+              required
+            />
+            <input 
+              type="text" 
+              name="payload" 
+              placeholder="Initial message (optional)"
+            />
+            <button type="submit">Connect</button>
+          </form>
+        </div>
+        
+        <div class="section">
+          <h2>💬 Send Data</h2>
+          <form id="send-data">
+            <input 
+              type="text" 
+              name="message" 
+              placeholder="Type your message here..."
+              required
+            />
+            <button type="submit">Send</button>
+          </form>
+          
+          <div class="controls">
+            <button id="start-dummy">▶️ Start Dummy Data</button>
+            <button id="stop-dummy">⏹️ Stop Dummy Data</button>
+          </div>
+        </div>
+        
+        <div class="section">
+          <h2>📤 Outgoing Messages</h2>
+          <div id="outgoing"></div>
+        </div>
+        
+        <div class="section">
+          <h2>📥 Incoming Messages</h2>
+          <div id="incoming"></div>
+        </div>
+      </div>
+    </main>
+  </div>
+  
+  <script type="module" src="main.js?v=5"></script>
+</body>
+</html>
