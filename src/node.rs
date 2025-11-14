@@ -27,12 +27,12 @@ pub struct StreamHandle {
 
 #[derive(Debug, Clone)]
 pub struct ErmisCallEndpoint {
-   pub endpoint: Endpoint,
-   pub cur_connection: Option<Connection>,
-   pub local_sender: Sender<Bytes>,
-   pub local_receiver: Receiver<Bytes>,
-   pub remote_sender: Sender<Bytes>,
-   pub remote_receiver: Receiver<Bytes>,
+    pub endpoint: Endpoint,
+    pub cur_connection: Option<Connection>,
+    pub local_sender: Sender<Bytes>,
+    pub local_receiver: Receiver<Bytes>,
+    pub remote_sender: Sender<Bytes>,
+    pub remote_receiver: Receiver<Bytes>,
 }
 
 impl ErmisCallEndpoint {
@@ -56,7 +56,6 @@ impl ErmisCallEndpoint {
             remote_receiver,
         })
     }
-
 
     pub fn connection_type(&self) -> Option<ConnectionType> {
         if let Some(conn) = self.cur_connection.as_ref() {
@@ -86,9 +85,7 @@ impl ErmisCallEndpoint {
 
         println!("connected to {:?}", conn.remote_id());
 
-
         self.cur_connection = Some(conn);
-
 
         Ok(())
     }
@@ -117,12 +114,14 @@ impl ErmisCallEndpoint {
         };
         let remote_sender = self.remote_sender.clone();
         let remote_receiver = self.remote_receiver.clone();
-        let conn = conn.clone(); 
+        let conn = conn.clone();
 
         wasm_bindgen_futures::spawn_local(async move {
+        // tokio::spawn(async move {
+            println!("accepted bidi stream");
             let (send_stream, recv_stream) = conn.accept_bi().await.unwrap();
-        let mut sender = FramedWrite::new(send_stream, LengthDelimitedCodec::new());
-        let mut receiver = FramedRead::new(recv_stream, LengthDelimitedCodec::new());
+            let mut sender = FramedWrite::new(send_stream, LengthDelimitedCodec::new());
+            let mut receiver = FramedRead::new(recv_stream, LengthDelimitedCodec::new());
 
             loop {
                 select! {
@@ -172,12 +171,12 @@ impl ErmisCallEndpoint {
         let conn = conn.clone();
 
         wasm_bindgen_futures::spawn_local(async move {
-             let (send_stream, recv_stream) = conn.open_bi().await.unwrap();
-        println!("opened bidi stream");
+            println!("opened bidi stream");
 
-        let mut sender = FramedWrite::new(send_stream, LengthDelimitedCodec::new());
-        let mut receiver = FramedRead::new(recv_stream, LengthDelimitedCodec::new());
-       
+            let (send_stream, recv_stream) = conn.open_bi().await.unwrap();
+            let mut sender = FramedWrite::new(send_stream, LengthDelimitedCodec::new());
+            let mut receiver = FramedRead::new(recv_stream, LengthDelimitedCodec::new());
+
             loop {
                 select! {
             msg = receiver.next().fuse() => match msg {

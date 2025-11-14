@@ -40,15 +40,24 @@ async fn main() -> Result<()> {
             
         }
         Command::Accept => {
-            // println!("connect to this node:");
-            // println!(
-            //     "cargo run -- connect {} hello-please-echo-back",
-            //     node.endpoint().id()
-            // );
-            // let mut events = node.accept_events();
-            // while let Some(event) = events.next().await {
-            //     println!("event {event:?}");
-            // }
+
+            println!("connect to this node:");
+            println!(
+                "cargo run -- connect {}",
+                node.get_local_endpoint_addr()?,
+            );
+            let _ = node.accept_connection().await?;
+            let _ = node.accept_bidi_stream().await?;
+
+            loop {
+        if let Ok(bytes) = node.recv() {
+            println!(
+                "Received bytes: {}, {:?}",
+                u64::from_be_bytes(bytes[0..8].try_into().unwrap()),
+                std::time::Instant::now(),
+            );
+        }
+    }
         }
     }
 

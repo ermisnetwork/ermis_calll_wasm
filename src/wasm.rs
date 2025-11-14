@@ -111,8 +111,6 @@ impl ErmisCall {
 
     #[wasm_bindgen(js_name = acceptConnection)]
     pub async fn accept_connection(&self) -> Result<(), JsValue> {
-        // let mut inner = self.inner.borrow_mut();
-        // let endpoint = inner.as_mut().ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?;
         let mut endpoint = {
             let mut inner = self.inner.borrow_mut();
             inner
@@ -130,17 +128,6 @@ impl ErmisCall {
 
     #[wasm_bindgen(js_name = acceptBidiStream)]
     pub async fn accept_bidi_stream(&self) -> Result<(), JsValue> {
-        // // let mut inner = self.inner.borrow_mut();
-        // // let endpoint = inner.as_mut().ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?;
-        // let mut endpoint = {
-        //     let mut inner = self.inner.borrow_mut();
-        //     inner
-        //         .as_mut()
-        //         .ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?
-        //         .clone() 
-        // };
-
-        // endpoint
         let inner = self.inner.clone();
 
         inner.borrow_mut()
@@ -149,15 +136,11 @@ impl ErmisCall {
             .accept_bidi_stream().await
             .map_err(|e| JsValue::from_str(&format!("Failed to accept bidi stream: {}", e)))?;
 
-        
-
         console_log!("Bidi stream accepted");
         Ok(())
     }
 
     #[wasm_bindgen(js_name = openBidiStream)]
-  
-
     pub async fn open_bidi_stream(&self) -> Result<(), JsValue> {
         let inner = self.inner.clone();
 
@@ -172,15 +155,7 @@ impl ErmisCall {
         Ok(())
     }
 
-    // #[wasm_bindgen]
-    // pub fn send(&self, data: &[u8]) -> Result<(), JsValue> {
-        
-    //     self.inner.borrow_mut()
-    //         .as_mut()
-    //         .ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?
-    //         .send(data)
-    //         .map_err(|e| JsValue::from_str(&format!("Failed to send: {}", e)))
-    // }
+
     #[wasm_bindgen]
     pub fn send(&self, data: &[u8]) -> Result<(), JsValue> {
 
