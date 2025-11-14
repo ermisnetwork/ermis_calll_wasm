@@ -1,4 +1,5 @@
 
+use bytes::Bytes;
 use wasm_bindgen::prelude::*;
 use serde::{ Deserialize, Serialize };
 use std::cell::RefCell;
@@ -171,12 +172,25 @@ impl ErmisCall {
         Ok(())
     }
 
+    // #[wasm_bindgen]
+    // pub fn send(&self, data: &[u8]) -> Result<(), JsValue> {
+        
+    //     self.inner.borrow_mut()
+    //         .as_mut()
+    //         .ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?
+    //         .send(data)
+    //         .map_err(|e| JsValue::from_str(&format!("Failed to send: {}", e)))
+    // }
     #[wasm_bindgen]
     pub fn send(&self, data: &[u8]) -> Result<(), JsValue> {
-        self.inner.borrow_mut()
-            .as_mut()
-            .ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?
-            .send(data)
+
+        let endpoint = self.inner.borrow();
+        let endpoint = endpoint
+            .as_ref()
+            .ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?;
+        let sender = endpoint.local_sender.clone();
+        sender
+            .send(Bytes::copy_from_slice(data))
             .map_err(|e| JsValue::from_str(&format!("Failed to send: {}", e)))
     }
 
@@ -306,132 +320,3 @@ impl ErmisCall {
 }
 
 
-// #[wasm_bindgen]
-// pub struct ErmisCall {
-//     endpoint: Option<ErmisCallEndpoint>,
-// }
-
-// #[wasm_bindgen]
-// impl ErmisCall {
-//     #[wasm_bindgen(constructor)]
-
-//     pub fn new() -> Self {
-//         console_error_panic_hook::set_once();
-//         Self {
-//             endpoint: None,
-//         }
-//     }
-    
-//     #[wasm_bindgen]
-//     pub async fn spawn(&mut self, relay_urls: JsValue) -> Result<(), JsValue> {
-//         console_error_panic_hook::set_once();
-        
-//         let urls: Vec<String> = serde_wasm_bindgen::from_value(relay_urls)
-//             .map_err(|e| JsValue::from_str(&format!("Invalid relay URLs: {}", e)))?;
-
-//         let url_refs: Vec<&str> = urls.iter().map(|s| s.as_str()).collect();
-
-//         let endpoint = ErmisCallEndpoint::new(&url_refs)
-//             .await
-//             .map_err(|e| JsValue::from_str(&format!("Failed to spawn: {}", e)))?;
-//         self.endpoint = Some(endpoint);
-//         console_log!("ErmisCall endpoint spawned successfully");
-//         Ok(())
-//     }
-
-   
-
-   
-
-//     #[wasm_bindgen]
-//     pub async fn connect(&mut self, addr: &str) -> Result<(), JsValue> {
-//         self.endpoint.as_mut().ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?
-//             .connect(addr)
-//             .await
-//             .map_err(|e| JsValue::from_str(&format!("Failed to connect: {}", e)))?;
-        
-//         console_log!("Connected to peer");
-//         Ok(())
-//     }
-
-//     #[wasm_bindgen(js_name = acceptConnection)]
-//     pub async fn accept_connection(&mut self) -> Result<(), JsValue> {
-//         self.endpoint.as_mut().ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?
-//             .accept_connection()
-//             .await
-//             .map_err(|e| JsValue::from_str(&format!("Failed to accept connection: {}", e)))?;
-        
-//         console_log!("Connection accepted");
-//         Ok(())
-//     }
-
-//     #[wasm_bindgen(js_name = openBidiStream)]
-//     pub async fn open_bidi_stream(&mut self) -> Result<(), JsValue> {
-//         self.endpoint.as_mut().ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?
-//             .open_bidi_stream()
-//             .await
-//             .map_err(|e| JsValue::from_str(&format!("Failed to open bidi stream: {}", e)))?;
-        
-//         console_log!("Bidi stream opened");
-//         Ok(())
-//     }
-
-//     #[wasm_bindgen]
-//     pub fn send(&mut self, data: &[u8]) -> Result<(), JsValue> {
-//         self.endpoint.as_mut().ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?
-//             .send(data)
-//             .map_err(|e| JsValue::from_str(&format!("Failed to send: {}", e)))
-//     }
-
-//     #[wasm_bindgen(js_name = asyncSend)]
-//     pub async fn async_send(&mut self, data: &[u8]) -> Result<(), JsValue> {
-//         self.endpoint.as_mut().ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?
-//             .async_send(data)
-//             .await
-//             .map_err(|e| JsValue::from_str(&format!("Failed to async send: {}", e)))
-//     }
-
-//     #[wasm_bindgen]
-//     pub fn recv(&mut self) -> Result<Vec<u8>, JsValue> {
-//         let bytes = self.endpoint.as_mut().ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?
-//             .recv()
-//             .map_err(|e| JsValue::from_str(&format!("Failed to recv: {}", e)))?;
-//         Ok(bytes.to_vec())
-//     }
-
-//     #[wasm_bindgen(js_name = asyncRecv)]
-//     pub async fn async_recv(&mut self) -> Result<Vec<u8>, JsValue> {
-//         let bytes = self.endpoint.as_mut().ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?
-//             .async_recv()
-//             .await  
-//             .map_err(|e| JsValue::from_str(&format!("Failed to async recv: {}", e)))?;
-//         Ok(bytes.to_vec())
-//     }   
-
-//      #[wasm_bindgen(js_name = getLocalEndpointAddr)]
-//     pub fn get_local_endpoint_addr(&self) -> Result<String, JsValue> {
-//         self.endpoint.as_ref().ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?
-//             .get_local_endpoint_addr()
-//             .map_err(|e| JsValue::from_str(&format!("Failed to get address: {}", e)))
-//     }
-
-//     #[wasm_bindgen(js_name = connectionType)]
-//     pub fn connection_type(&self) -> Option<String> {
-//         self.endpoint.as_ref().ok_or_else(|| JsValue::from_str("Endpoint not initialized")).unwrap()
-//             .connection_type()
-//             .map(|ct| format!("{:?}", ct))
-//     }
-
-//     #[wasm_bindgen(js_name = roundTripTime)]
-//     pub fn round_trip_time(&self) -> Option<f64> {
-//         self.endpoint.as_ref().ok_or_else(|| JsValue::from_str("Endpoint not initialized")).unwrap()
-//             .round_trip_time()
-//             .map(|d| d.as_secs_f64() * 1000.0)
-//     }
-
-//     #[wasm_bindgen(js_name = currentPacketLoss)]
-//     pub fn current_packet_loss(&self) -> Option<f64> {
-//         self.endpoint.as_ref().ok_or_else(|| JsValue::from_str("Endpoint not initialized")).unwrap()
-//             .cur_packet_loss()
-//     }
-// }

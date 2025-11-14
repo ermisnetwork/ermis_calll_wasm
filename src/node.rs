@@ -10,7 +10,7 @@ use iroh::{
     Watcher,
     endpoint::{ Builder, Connection, ConnectionType },
 };
-use n0_future::{StreamExt, task};
+use n0_future::StreamExt;
 use flume::{ Receiver, Sender };
 
 use tokio_util::{ bytes::Bytes, codec::{ FramedRead, FramedWrite, LengthDelimitedCodec } };
@@ -20,14 +20,19 @@ use futures::{ FutureExt, SinkExt, select };
 
 const ALPN: &[u8] = b"ermis-call";
 
+pub struct StreamHandle {
+    pub sender: Sender<Bytes>,
+    pub receiver: Receiver<Bytes>,
+}
+
 #[derive(Debug, Clone)]
 pub struct ErmisCallEndpoint {
-    endpoint: Endpoint,
-    cur_connection: Option<Connection>,
-    local_sender: Sender<Bytes>,
-    local_receiver: Receiver<Bytes>,
-    remote_sender: Sender<Bytes>,
-    remote_receiver: Receiver<Bytes>,
+   pub endpoint: Endpoint,
+   pub cur_connection: Option<Connection>,
+   pub local_sender: Sender<Bytes>,
+   pub local_receiver: Receiver<Bytes>,
+   pub remote_sender: Sender<Bytes>,
+   pub remote_receiver: Receiver<Bytes>,
 }
 
 impl ErmisCallEndpoint {
@@ -52,44 +57,6 @@ impl ErmisCallEndpoint {
         })
     }
 
-    //  pub fn new(relay_urls: &[&str], secret_key: Option<&[u8; 32]>) -> Result<Self> {
-    //     // let runtime = Runtime::new()?;
-    //     let runtime = tokio::runtime::Builder::new_multi_thread()
-    //         .worker_threads(2)
-    //         .enable_all()
-    //         .build()?;
-    //     let _ = runtime.enter();
-    //     let secret_key = if let Some(key) = secret_key {
-    //         SecretKey::from_bytes(key)
-    //     } else {
-    //         SecretKey::generate(&mut rand::rng())
-    //     };
-    //     let res: Result<Endpoint> = runtime.block_on(async move {
-    //         let iroh_endpoint = Builder::empty(RelayMode::Custom(RelayMap::from_iter(
-    //             relay_urls
-    //                 .iter()
-    //                 .map(|url| RelayUrl::from_str(url).unwrap()),
-    //         )))
-    //         .secret_key(secret_key)
-    //         .alpns(vec![b"ermis-call".to_vec()])
-    //         .bind()
-    //         .await?;
-    //         iroh_endpoint.online().await;
-    //         println!("{:?}", iroh_endpoint.addr());
-    //         Ok(iroh_endpoint)
-    //     });
-    //     let (local_sender, remote_receiver) = flume::unbounded();
-    //     let (remote_sender, local_receiver) = flume::unbounded();
-    //     Ok(Self {
-    //         iroh_endpoint: res?,
-    //         cur_connection: None,
-    //         local_sender,
-    //         local_receiver,
-    //         remote_sender,
-    //         remote_receiver,
-    //         runtime,
-    //     })
-    // }
 
     pub fn connection_type(&self) -> Option<ConnectionType> {
         if let Some(conn) = self.cur_connection.as_ref() {
@@ -119,48 +86,9 @@ impl ErmisCallEndpoint {
 
         println!("connected to {:?}", conn.remote_id());
 
-        // let ( send, recv) = conn.open_bi().await?;
-        // println!("opened bidi stream");
-        // let mut framed_write = FramedWrite::new(send, LengthDelimitedCodec::new());
-        // framed_write.send(Bytes::from("hello from client")).await?;
 
-        // send.write_all(b"test send message").await?;
         self.cur_connection = Some(conn);
 
-
-
-        // let send_task =task::spawn(async move {
-        //     let mut framed_reader = FramedRead::new(recv, LengthDelimitedCodec::new());
-        //     loop {
-        //         select! {
-        //     msg = framed_reader.next().fuse() => match msg {
-        //         Some(Ok(msg)) => {
-        //             println!("Received message: {:?}", msg);
-        //     } 
-        //         Some(Err(e)) => {
-        //             println!("Error receiving message: {}", e);
-        //             break;
-        //         }
-        //         None => {
-        //             println!("Receiver closed");
-        //             break;
-        //         }
-        //     }}
-        //     }
-        //     // while let Some(msg) = reader.next().await {
-        //     //     match msg {
-        //     //         Ok(msg) => {
-        //     //             println!("Received message: {:?}", msg);
-        //     //         }
-        //     //         Err(e) => {
-        //     //             println!("Error receiving message: {}", e);
-        //     //             break;
-        //     //         }
-        //     //     }
-        //     // }
-        // });
-
-        // send_task.await?;
 
         Ok(())
     }
@@ -187,16 +115,15 @@ impl ErmisCallEndpoint {
         let Some(conn) = &cur_connection else {
             anyhow::bail!("Error accepting stream: No Connection established")
         };
+        let remote_sender = self.remote_sender.clone();
+        let remote_receiver = self.remote_receiver.clone();
+        let conn = conn.clone(); 
 
-        let (send_stream, recv_stream) = conn.accept_bi().await?;
+        wasm_bindgen_futures::spawn_local(async move {
+            let (send_stream, recv_stream) = conn.accept_bi().await.unwrap();
         let mut sender = FramedWrite::new(send_stream, LengthDelimitedCodec::new());
         let mut receiver = FramedRead::new(recv_stream, LengthDelimitedCodec::new());
 
-        let remote_sender = self.remote_sender.clone();
-        let remote_receiver = self.remote_receiver.clone();
-
-        // wasm_bindgen_futures::spawn_local(async move {
-        tokio::spawn(async move {
             loop {
                 select! {
             msg = receiver.next().fuse() => match msg {
@@ -239,12 +166,6 @@ impl ErmisCallEndpoint {
         let Some(conn) = &cur_connection else {
             anyhow::bail!("Error opening stream: No Connection established")
         };
-        // let (send_stream, recv_stream) = conn.accept_bi().await?;
-        // let (send_stream, recv_stream) = conn.open_bi().await?;
-        // println!("opened bidi stream");
-
-        // let mut sender = FramedWrite::new(send_stream, LengthDelimitedCodec::new());
-        // let mut receiver = FramedRead::new(recv_stream, LengthDelimitedCodec::new());
 
         let remote_sender = self.remote_sender.clone();
         let remote_receiver = self.remote_receiver.clone();
