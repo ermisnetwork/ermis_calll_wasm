@@ -128,11 +128,19 @@ impl ErmisCall {
 
     #[wasm_bindgen(js_name = acceptBidiStream)]
     pub async fn accept_bidi_stream(&self) -> Result<(), JsValue> {
-        let inner = self.inner.clone();
+        // let inner = self.inner.clone();
 
-        inner.borrow_mut()
-            .as_mut()
-            .ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?
+        // inner.borrow_mut()
+        //     .as_mut()
+        //     .ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?
+        let mut endpoint = {
+            let mut inner = self.inner.borrow_mut();
+            inner
+                .as_mut()
+                .ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?
+                .clone() // Cần ErmisCallEndpoint implement Clone
+        };
+        endpoint
             .accept_bidi_stream().await
             .map_err(|e| JsValue::from_str(&format!("Failed to accept bidi stream: {}", e)))?;
 
