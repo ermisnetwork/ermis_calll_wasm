@@ -118,49 +118,7 @@ impl ErmisCallEndpoint {
         let conn = endpoint.connect(addr, ALPN).await?;
 
         println!("connected to {:?}", conn.remote_id());
-
-        // let ( send, recv) = conn.open_bi().await?;
-        // println!("opened bidi stream");
-        // let mut framed_write = FramedWrite::new(send, LengthDelimitedCodec::new());
-        // framed_write.send(Bytes::from("hello from client")).await?;
-
-        // send.write_all(b"test send message").await?;
         self.cur_connection = Some(conn);
-
-
-
-        // let send_task =task::spawn(async move {
-        //     let mut framed_reader = FramedRead::new(recv, LengthDelimitedCodec::new());
-        //     loop {
-        //         select! {
-        //     msg = framed_reader.next().fuse() => match msg {
-        //         Some(Ok(msg)) => {
-        //             println!("Received message: {:?}", msg);
-        //     } 
-        //         Some(Err(e)) => {
-        //             println!("Error receiving message: {}", e);
-        //             break;
-        //         }
-        //         None => {
-        //             println!("Receiver closed");
-        //             break;
-        //         }
-        //     }}
-        //     }
-        //     // while let Some(msg) = reader.next().await {
-        //     //     match msg {
-        //     //         Ok(msg) => {
-        //     //             println!("Received message: {:?}", msg);
-        //     //         }
-        //     //         Err(e) => {
-        //     //             println!("Error receiving message: {}", e);
-        //     //             break;
-        //     //         }
-        //     //     }
-        //     // }
-        // });
-
-        // send_task.await?;
 
         Ok(())
     }
@@ -188,15 +146,18 @@ impl ErmisCallEndpoint {
             anyhow::bail!("Error accepting stream: No Connection established")
         };
 
-        let (send_stream, recv_stream) = conn.accept_bi().await?;
-        let mut sender = FramedWrite::new(send_stream, LengthDelimitedCodec::new());
-        let mut receiver = FramedRead::new(recv_stream, LengthDelimitedCodec::new());
+        
 
         let remote_sender = self.remote_sender.clone();
         let remote_receiver = self.remote_receiver.clone();
+        let conn = conn.clone();
 
-        // wasm_bindgen_futures::spawn_local(async move {
-        tokio::spawn(async move {
+        wasm_bindgen_futures::spawn_local(async move {
+        // tokio::spawn(async move {
+            println!("accepted bidi stream");
+        let (send_stream, recv_stream) = conn.accept_bi().await.unwrap();
+        let mut sender = FramedWrite::new(send_stream, LengthDelimitedCodec::new());
+        let mut receiver = FramedRead::new(recv_stream, LengthDelimitedCodec::new());
             loop {
                 select! {
             msg = receiver.next().fuse() => match msg {
@@ -239,21 +200,15 @@ impl ErmisCallEndpoint {
         let Some(conn) = &cur_connection else {
             anyhow::bail!("Error opening stream: No Connection established")
         };
-        // let (send_stream, recv_stream) = conn.accept_bi().await?;
-        // let (send_stream, recv_stream) = conn.open_bi().await?;
-        // println!("opened bidi stream");
-
-        // let mut sender = FramedWrite::new(send_stream, LengthDelimitedCodec::new());
-        // let mut receiver = FramedRead::new(recv_stream, LengthDelimitedCodec::new());
 
         let remote_sender = self.remote_sender.clone();
         let remote_receiver = self.remote_receiver.clone();
         let conn = conn.clone();
 
         wasm_bindgen_futures::spawn_local(async move {
-             let (send_stream, recv_stream) = conn.open_bi().await.unwrap();
-        println!("opened bidi stream");
-
+        // tokio::spawn(async move {
+            println!("opened bidi stream");
+        let (send_stream, recv_stream) = conn.open_bi().await.unwrap();
         let mut sender = FramedWrite::new(send_stream, LengthDelimitedCodec::new());
         let mut receiver = FramedRead::new(recv_stream, LengthDelimitedCodec::new());
        

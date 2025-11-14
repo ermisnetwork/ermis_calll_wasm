@@ -1,4 +1,3 @@
-
 use wasm_bindgen::prelude::*;
 use serde::{ Deserialize, Serialize };
 use std::cell::RefCell;
@@ -51,8 +50,6 @@ impl ErmisCall {
         Ok(())
     }
 
-
-
     #[wasm_bindgen(js_name = getLocalEndpointAddr)]
     pub fn get_local_endpoint_addr(&self) -> Result<String, JsValue> {
         let inner = self.inner.borrow();
@@ -63,44 +60,15 @@ impl ErmisCall {
             .map_err(|e| JsValue::from_str(&format!("Failed to get address: {}", e)))
     }
 
+    
     #[wasm_bindgen]
-    // pub async fn connect(&self, addr: &str) -> Result<(), JsValue> {
-    //     // let mut inner = self.inner.borrow_mut();
-    //     // let endpoint = inner.as_mut()
-    //     //     .ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?;
-    //     let mut endpoint = {
-    //         let mut inner = self.inner.borrow_mut();
-    //         inner
-    //             .as_mut()
-    //             .ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?
-    //             .clone() // Cần ErmisCallEndpoint implement Clone
-    //     };
-
-    //     endpoint
-    //         .connect(addr).await
-    //         .map_err(|e| JsValue::from_str(&format!("Failed to connect: {}", e)))?;
-
-    //     console_log!("current connection after connected: {:?}", endpoint.get_current_connection());
-
-    //     console_log!("Connected to peer");
-    //     Ok(())
-    // }
-
      pub async fn connect(&self, addr: &str) -> Result<(), JsValue> {
         let inner = self.inner.clone();
-        let addr = addr.to_string();
-        // let endpoint;
-        // {
-        //     let mut endpoint = inner.borrow_mut();
-        //      endpoint = endpoint.as_mut()
-        //         .ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?;
-            
-        // }
 
         inner.borrow_mut()
             .as_mut()
             .ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?
-            .connect(&addr)
+            .connect(addr)
             .await
             .map_err(|e| JsValue::from_str(&format!("Failed to connect: {}", e)))?;
 
@@ -108,20 +76,21 @@ impl ErmisCall {
         Ok(())
     }
 
+  
     #[wasm_bindgen(js_name = acceptConnection)]
     pub async fn accept_connection(&self) -> Result<(), JsValue> {
-        // let mut inner = self.inner.borrow_mut();
-        // let endpoint = inner.as_mut().ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?;
         let mut endpoint = {
             let mut inner = self.inner.borrow_mut();
             inner
                 .as_mut()
                 .ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?
-                .clone() // Cần ErmisCallEndpoint implement Clone
+                .clone()
         };
         endpoint
             .accept_connection().await
             .map_err(|e| JsValue::from_str(&format!("Failed to accept connection: {}", e)))?;
+
+        *self.inner.borrow_mut() = Some(endpoint);
 
         console_log!("Connection accepted");
         Ok(())
@@ -129,42 +98,28 @@ impl ErmisCall {
 
     #[wasm_bindgen(js_name = acceptBidiStream)]
     pub async fn accept_bidi_stream(&self) -> Result<(), JsValue> {
-        // // let mut inner = self.inner.borrow_mut();
-        // // let endpoint = inner.as_mut().ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?;
-        // let mut endpoint = {
-        //     let mut inner = self.inner.borrow_mut();
-        //     inner
-        //         .as_mut()
-        //         .ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?
-        //         .clone() 
-        // };
-
-        // endpoint
         let inner = self.inner.clone();
 
-        inner.borrow_mut()
+        inner
+            .borrow_mut()
             .as_mut()
             .ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?
             .accept_bidi_stream().await
             .map_err(|e| JsValue::from_str(&format!("Failed to accept bidi stream: {}", e)))?;
-
-        
 
         console_log!("Bidi stream accepted");
         Ok(())
     }
 
     #[wasm_bindgen(js_name = openBidiStream)]
-  
-
     pub async fn open_bidi_stream(&self) -> Result<(), JsValue> {
         let inner = self.inner.clone();
 
-        inner.borrow_mut()
+        inner
+            .borrow_mut()
             .as_mut()
             .ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?
-            .open_bidi_stream()
-            .await
+            .open_bidi_stream().await
             .map_err(|e| JsValue::from_str(&format!("Failed to open bidi stream: {}", e)))?;
 
         console_log!("Bidi stream opened");
@@ -173,7 +128,8 @@ impl ErmisCall {
 
     #[wasm_bindgen]
     pub fn send(&self, data: &[u8]) -> Result<(), JsValue> {
-        self.inner.borrow_mut()
+        self.inner
+            .borrow_mut()
             .as_mut()
             .ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?
             .send(data)
@@ -182,13 +138,12 @@ impl ErmisCall {
 
     #[wasm_bindgen(js_name = asyncSend)]
     pub async fn async_send(&self, data: &[u8]) -> Result<(), JsValue> {
-
         let mut endpoint = {
             let mut inner = self.inner.borrow_mut();
             inner
                 .as_mut()
                 .ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?
-                .clone() 
+                .clone()
         };
 
         endpoint
@@ -198,13 +153,12 @@ impl ErmisCall {
 
     #[wasm_bindgen]
     pub fn recv(&self) -> Result<Vec<u8>, JsValue> {
-
         let mut endpoint = {
             let mut inner = self.inner.borrow_mut();
             inner
                 .as_mut()
                 .ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?
-                .clone() 
+                .clone()
         };
 
         let bytes = endpoint
@@ -221,7 +175,7 @@ impl ErmisCall {
             inner
                 .as_mut()
                 .ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?
-                .clone() 
+                .clone()
         };
 
         let bytes = endpoint
@@ -305,7 +259,6 @@ impl ErmisCall {
     }
 }
 
-
 // #[wasm_bindgen]
 // pub struct ErmisCall {
 //     endpoint: Option<ErmisCallEndpoint>,
@@ -321,11 +274,11 @@ impl ErmisCall {
 //             endpoint: None,
 //         }
 //     }
-    
+
 //     #[wasm_bindgen]
 //     pub async fn spawn(&mut self, relay_urls: JsValue) -> Result<(), JsValue> {
 //         console_error_panic_hook::set_once();
-        
+
 //         let urls: Vec<String> = serde_wasm_bindgen::from_value(relay_urls)
 //             .map_err(|e| JsValue::from_str(&format!("Invalid relay URLs: {}", e)))?;
 
@@ -339,17 +292,13 @@ impl ErmisCall {
 //         Ok(())
 //     }
 
-   
-
-   
-
 //     #[wasm_bindgen]
 //     pub async fn connect(&mut self, addr: &str) -> Result<(), JsValue> {
 //         self.endpoint.as_mut().ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?
 //             .connect(addr)
 //             .await
 //             .map_err(|e| JsValue::from_str(&format!("Failed to connect: {}", e)))?;
-        
+
 //         console_log!("Connected to peer");
 //         Ok(())
 //     }
@@ -360,7 +309,7 @@ impl ErmisCall {
 //             .accept_connection()
 //             .await
 //             .map_err(|e| JsValue::from_str(&format!("Failed to accept connection: {}", e)))?;
-        
+
 //         console_log!("Connection accepted");
 //         Ok(())
 //     }
@@ -371,7 +320,7 @@ impl ErmisCall {
 //             .open_bidi_stream()
 //             .await
 //             .map_err(|e| JsValue::from_str(&format!("Failed to open bidi stream: {}", e)))?;
-        
+
 //         console_log!("Bidi stream opened");
 //         Ok(())
 //     }
@@ -403,10 +352,10 @@ impl ErmisCall {
 //     pub async fn async_recv(&mut self) -> Result<Vec<u8>, JsValue> {
 //         let bytes = self.endpoint.as_mut().ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?
 //             .async_recv()
-//             .await  
+//             .await
 //             .map_err(|e| JsValue::from_str(&format!("Failed to async recv: {}", e)))?;
 //         Ok(bytes.to_vec())
-//     }   
+//     }
 
 //      #[wasm_bindgen(js_name = getLocalEndpointAddr)]
 //     pub fn get_local_endpoint_addr(&self) -> Result<String, JsValue> {
