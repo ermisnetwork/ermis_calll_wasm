@@ -25,7 +25,7 @@ enum Command {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse();
-    let mut node = ErmisCallEndpoint::new(&["https://test-iroh.ermis.network.:8443"]).await?;
+    let mut node = ErmisCallEndpoint::new(&["https://test-iroh.ermis.network.:8443"], None).await?;
     let addr = node.get_local_endpoint_addr()?;
     println!("Node Endpoint Addr: {}", addr);
     match args.command {

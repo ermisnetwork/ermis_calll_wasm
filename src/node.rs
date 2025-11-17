@@ -3,12 +3,12 @@ use std::{ str::FromStr, time::Duration };
 use anyhow::Result;
 use iroh::{
     Endpoint,
-    EndpointAddr,
+    NodeAddr,
     RelayMap,
     RelayMode,
     RelayUrl,
-    Watcher,
-    endpoint::{ Builder, Connection, ConnectionType },
+    SecretKey,
+    endpoint::{  Connection, ConnectionType },
 };
 use n0_future::StreamExt;
 use flume::{ Receiver, Sender };
@@ -36,15 +36,23 @@ pub struct ErmisCallEndpoint {
 }
 
 impl ErmisCallEndpoint {
-    pub async fn new(relay_urls: &[&str]) -> Result<Self> {
-        let endpoint = Builder::empty(
-            RelayMode::Custom(
-                RelayMap::from_iter(relay_urls.iter().map(|url| RelayUrl::from_str(url).unwrap()))
-            )
-        )
+    pub async fn new(relay_urls: &[&str], secret_key: Option<&[u8; 32]>) -> Result<Self> {
+        let secret_key = if let Some(key) = secret_key {
+            SecretKey::from_bytes(key)
+        } else {
+            let mut rng = rand::rngs::OsRng;
+            SecretKey::generate(&mut rng)
+        };
+        let endpoint = Endpoint::builder().relay_mode(RelayMode::Custom(RelayMap::from_iter(
+                relay_urls
+                    .iter()
+                    .map(|url| RelayUrl::from_str(url).unwrap()),
+            )))
+            .secret_key(secret_key)
             .alpns(vec![ALPN.to_vec()])
-            .bind().await?;
-        endpoint.online().await;
+            .bind()
+            .await?;
+        // endpoint.online().await;
         let (local_sender, remote_receiver) = flume::unbounded();
         let (remote_sender, local_receiver) = flume::unbounded();
         Ok(Self {
@@ -57,10 +65,21 @@ impl ErmisCallEndpoint {
         })
     }
 
+   
+
+    // pub fn connection_type(&self) -> Option<ConnectionType> {
+    //     if let Some(conn) = self.cur_connection.as_ref() {
+    //         let c = self.endpoint.conn_type(conn.remote_id().unwrap());
+    //         return Some(c.unwrap().get());
+    //     } else {
+    //         None
+    //     }
+    // }
+
     pub fn connection_type(&self) -> Option<ConnectionType> {
         if let Some(conn) = self.cur_connection.as_ref() {
-            let c = self.endpoint.conn_type(conn.remote_id().unwrap());
-            return Some(c.unwrap().get());
+            let c = self.endpoint.conn_type(conn.remote_node_id().unwrap());
+            return Some(c.unwrap().get().unwrap());
         } else {
             None
         }
@@ -70,8 +89,8 @@ impl ErmisCallEndpoint {
         if let Some(conn) = self.cur_connection.as_ref() { Some(conn.rtt()) } else { None }
     }
 
-    pub fn get_local_endpoint_addr(&self) -> Result<String> {
-        let addr_bytes = bitcode::serialize(&self.endpoint.addr())?;
+    pub async fn get_local_endpoint_addr(&self) -> Result<String> {
+        let addr_bytes = bitcode::serialize(&self.endpoint.node_addr().await?)?;
         let addr_str = base64::prelude::BASE64_STANDARD.encode(addr_bytes);
         Ok(addr_str)
     }
@@ -79,11 +98,11 @@ impl ErmisCallEndpoint {
     pub async fn connect(&mut self, addr: &str) -> Result<()> {
         let endpoint = self.endpoint.clone();
         let addr_bytes = BASE64_STANDARD.decode(addr)?;
-        let addr: EndpointAddr = bitcode::deserialize(&addr_bytes)?;
+        let addr: NodeAddr = bitcode::deserialize(&addr_bytes)?;
         println!("connecting to {:?}", addr);
         let conn = endpoint.connect(addr, ALPN).await?;
 
-        println!("connected to {:?}", conn.remote_id());
+        println!("connected to {:?}", conn.remote_node_id()?);
 
         self.cur_connection = Some(conn);
 
@@ -117,7 +136,7 @@ impl ErmisCallEndpoint {
         let conn = conn.clone();
 
         wasm_bindgen_futures::spawn_local(async move {
-        // tokio::spawn(async move {
+            // tokio::spawn(async move {
             println!("accepted bidi stream");
             let (send_stream, recv_stream) = conn.accept_bi().await.unwrap();
             let mut sender = FramedWrite::new(send_stream, LengthDelimitedCodec::new());

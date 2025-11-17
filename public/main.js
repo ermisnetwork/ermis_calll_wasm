@@ -1,7 +1,5 @@
-
-
-
 import init, { ErmisCall } from "./wasm/ermis_call_node_wasm.js";
+
 await init();
 
 log("launching iroh endpoint …");
@@ -10,7 +8,7 @@ const node = new ErmisCall();
 await node.spawn(["https://test-iroh.ermis.network.:8443"]);
 
 log("iroh endpoint launched");
-const endpointAddr = node.getLocalEndpointAddr();
+let endpointAddr = await node.getLocalEndpointAddr();
 log("our endpoint addr: " + endpointAddr);
 
 log("connect from the command line:");
@@ -68,12 +66,17 @@ async function receiveMessages() {
   while (isConnected) {
     try {
       const data = await node.asyncRecv();
-      // const text = new TextDecoder().decode(data);
+      const text = new TextDecoder().decode(data);
+      if (text.startsWith("[ermis-call]")) {
+        // skip internal messages
+        logNodeEvent($incoming, "peer", `internal message: ${text}`, "info");
+      }
       receiveCounter += 1;
       if (performance.now() - now >= 1000) {
         logNodeEvent(
-          $incoming, "peer",
-          `Receiving rate: ${receiveCounter} messages/sec`,
+          $incoming,
+          "peer",
+          `Receiving rate: ${receiveCounter} messages/sec, data size: ${data.length} bytes`,
           "info",
           $incoming
         );
@@ -125,7 +128,7 @@ async function onConnectSubmit(e) {
   const $outgoing = document.querySelector("#outgoing");
   try {
     logNodeEvent($outgoing, peerAddr, "connecting …");
-console.log("connecting to peer", peerAddr);
+    console.log("connecting to peer", peerAddr);
     // Connect to peer
     await node.connect(peerAddr);
     logNodeEvent($outgoing, peerAddr, "connected", "success");
@@ -170,8 +173,9 @@ async function onSendDataSubmit(e) {
 
   const $outgoing = document.querySelector("#outgoing");
   try {
+    const sendmessage = `[ermis-call]:${message}`;
     const encoder = new TextEncoder();
-    await node.asyncSend(encoder.encode(message));
+    await node.asyncSend(encoder.encode(sendmessage));
     logNodeEvent(
       $outgoing,
       currentPeerAddr || "peer",
@@ -190,10 +194,10 @@ async function onSendDataSubmit(e) {
 let dummyDataInterval = null;
 function startDummyData() {
   if (dummyDataInterval) return;
-  
+
   const $outgoing = document.querySelector("#outgoing");
   let counter = 0;
-  
+
   let dummyCounter = 0;
   let dummyStartTime = performance.now();
   dummyDataInterval = setInterval(async () => {
@@ -206,7 +210,7 @@ function startDummyData() {
       // const message = `Dummy message #${++counter} at ${new Date().toISOString()}`;
       // const encoder = new TextEncoder();
       // dummy 1000 bytes message
-      const message = new Uint8Array(1000);;
+      const message = new Uint8Array(5000);
       await node.asyncSend(message);
       dummyCounter += 1;
       if (performance.now() - dummyStartTime >= 1000) {
@@ -215,17 +219,81 @@ function startDummyData() {
           currentPeerAddr || "peer",
           `sent dummy: ${dummyCounter} messages/sec`,
           "info"
-      );
-      dummyCounter = 0;
-      dummyStartTime = performance.now();
+        );
+        dummyCounter = 0;
+        dummyStartTime = performance.now();
+      }
+    } catch (err) {
+      log(`dummy send error: ${err}`, "error");
+      stopDummyData();
     }
-  } catch (err) {
-    log(`dummy send error: ${err}`, "error");
-    stopDummyData();
-  }
-  }, 20); // Send every 20 milliseconds
+  }, 10); // Send every 20 milliseconds
 
   log("started sending dummy data (every 2s)", "info");
+}
+
+async function startPublishingVideo() {
+  if (!isConnected) {
+    log("not connected to any peer", "error");
+    return;
+  }
+  const userMedia = await navigator.mediaDevices.getUserMedia({
+    video: true,
+    audio: false,
+  });
+  const videoTrack = userMedia.getVideoTracks()[0];
+  const mediaStreamTrackProcessor = new MediaStreamTrackProcessor({
+    track: videoTrack,
+  });
+  const reader = mediaStreamTrackProcessor.readable.getReader();
+
+  const videoEncoder = new VideoEncoder({
+    output: async (chunk, metadata) => {
+      // Send encoded video chunk
+      try {
+        const arrayBuffer = new ArrayBuffer(chunk.byteLength);
+        chunk.copyTo(new Uint8Array(arrayBuffer));
+        await node.asyncSend(new Uint8Array(arrayBuffer));
+        log(`sent video chunk, size: ${chunk.byteLength}`, "info");
+      } catch (err) {
+        log(`video send error: ${err}`, "error");
+      }
+    },
+    error: (error) => {
+      log(`VideoEncoder error: ${error}`, "error");
+    },
+  });
+
+  videoEncoder.configure({
+    codec: "avc1.42E01E", // H.264 baseline profile
+    width: 1280,
+    height: 720,
+    bitrate: 1_000_000,
+    framerate: 30,
+  });
+  
+  const videoElement = document.querySelector("#local-video");
+  videoElement.srcObject = new MediaStream([videoTrack]);
+  videoElement.play();
+  let frameCounter = 0;
+  while (isConnected) {
+    try {
+      const result = await reader.read();
+      if (result.done) break;
+      const videoFrame = result.value;
+      frameCounter += 1;
+      let keyframe = frameCounter % 30 === 0; // Force keyframe every 150 frames
+      videoEncoder.encode(videoFrame, { keyFrame: keyframe });
+      videoFrame.close();
+
+      // Convert VideoFrame to ArrayBuffer (you may want to use a more efficient method)
+    } catch (err) {
+      log(`video send error: ${err}`, "error");
+      break;
+    }
+  }
+
+  
 }
 
 function stopDummyData() {
