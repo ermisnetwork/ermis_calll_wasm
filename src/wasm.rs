@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use rand::Rng;
 use tokio::sync::Mutex;
 use wasm_bindgen::prelude::*;
 use serde::{ Deserialize, Serialize };
@@ -44,22 +45,32 @@ impl ErmisCall {
             .iter()
             .map(|s| s.as_str())
             .collect();
-        // let secret_key_ref = secret_key.as_deref().map(|v| {
-        //     let mut arr = [0u8; 32];
-        //     arr.copy_from_slice(&v[0..32]);
-        //     arr
-        // });
-        let array = secret_key
-            .as_deref()
-            .map(|v|
+
+        // let array = secret_key
+        //     .as_deref()
+        //     .map(|v|
+        //         v
+        //             .try_into()
+        //             .map_err(|_| JsValue::from_str("Invalid length"))
+        //             .unwrap()
+        //     )
+        //     .unwrap_or(&[0u8; 32]);
+
+        let array: [u8; 32] = secret_key.as_deref().map_or_else(
+            || {
+                let mut rng = rand::thread_rng();
+                let mut random_bytes = [0u8; 32];
+                let _ = rng.try_fill(&mut random_bytes);
+                random_bytes
+            },
+            |v|
                 v
                     .try_into()
                     .map_err(|_| JsValue::from_str("Invalid length"))
                     .unwrap()
-            )
-            .unwrap_or(&[0u8; 32]);
+        );
 
-        let endpoint = ErmisCallEndpoint::new(&url_refs, Some(array)).await.map_err(|e|
+        let endpoint = ErmisCallEndpoint::new(&url_refs, Some(&array)).await.map_err(|e|
             JsValue::from_str(&format!("Failed to spawn: {}", e))
         )?;
 
