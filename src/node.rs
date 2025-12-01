@@ -10,6 +10,7 @@ use iroh::{
     SecretKey,
     endpoint::{  Connection, ConnectionType },
 };
+use iroh_quinn_proto::VarInt;
 use n0_future::StreamExt;
 use flume::{ Receiver, Sender };
 
@@ -17,6 +18,8 @@ use tokio_util::{ bytes::Bytes, codec::{ FramedRead, FramedWrite, LengthDelimite
 
 use base64::{ Engine, prelude::BASE64_STANDARD };
 use futures::{ FutureExt, SinkExt, select };
+use wasm_bindgen_futures::spawn_local;
+use raptorq::{Decoder, Encoder, EncodingPacket, ObjectTransmissionInformation};
 
 const ALPN: &[u8] = b"ermis-call";
 
@@ -33,6 +36,10 @@ pub struct ErmisCallEndpoint {
     pub local_receiver: Receiver<Bytes>,
     pub remote_sender: Sender<Bytes>,
     pub remote_receiver: Receiver<Bytes>,
+    pub local_datagram_sender: Sender<Bytes>,
+    pub local_datagram_receiver: Receiver<Bytes>,
+    pub remote_datagram_sender: Sender<Bytes>,
+    pub remote_datagram_receiver: Receiver<Bytes>,
 }
 
 impl ErmisCallEndpoint {
@@ -52,9 +59,10 @@ impl ErmisCallEndpoint {
             .alpns(vec![ALPN.to_vec()])
             .bind()
             .await?;
-        // endpoint.online().await;
         let (local_sender, remote_receiver) = flume::unbounded();
         let (remote_sender, local_receiver) = flume::unbounded();
+        let (remote_datagram_sender, local_datagram_receiver) = flume::unbounded();
+        let (local_datagram_sender, remote_datagram_receiver) = flume::unbounded();
         Ok(Self {
             endpoint,
             cur_connection: None,
@@ -62,19 +70,16 @@ impl ErmisCallEndpoint {
             local_receiver,
             remote_sender,
             remote_receiver,
+            local_datagram_sender,
+            local_datagram_receiver,
+            remote_datagram_sender,
+            remote_datagram_receiver,
         })
     }
 
    
 
-    // pub fn connection_type(&self) -> Option<ConnectionType> {
-    //     if let Some(conn) = self.cur_connection.as_ref() {
-    //         let c = self.endpoint.conn_type(conn.remote_id().unwrap());
-    //         return Some(c.unwrap().get());
-    //     } else {
-    //         None
-    //     }
-    // }
+
 
     pub fn connection_type(&self) -> Option<ConnectionType> {
         if let Some(conn) = self.cur_connection.as_ref() {
@@ -101,6 +106,37 @@ impl ErmisCallEndpoint {
         let addr: NodeAddr = bitcode::deserialize(&addr_bytes)?;
         println!("connecting to {:?}", addr);
         let conn = endpoint.connect(addr, ALPN).await?;
+         let remote_datagram_sender = self.remote_datagram_sender.clone();
+        let remote_datagram_receiver = self.remote_datagram_receiver.clone();
+        let remote_sender = self.remote_sender.clone();
+        let conn_clone = conn.clone();
+        spawn_local(async move {
+            let mut decoder = None;
+            loop {
+                tokio::select! {
+                    Ok(data) = conn_clone.read_datagram().fuse() => {
+                       let _ = remote_datagram_sender.send(data.clone());
+                        if data.len() == 12 {
+                            let transmission_info =
+                                ObjectTransmissionInformation::deserialize(&data[..12].try_into().unwrap());
+                            decoder = Some(Decoder::new(transmission_info));
+                            continue;
+                        }
+                        if let Some(dcd) = &mut decoder {
+                            let encoding_packet = EncodingPacket::deserialize(&data);
+                            dcd.add_new_packet(encoding_packet);
+                            if let Some(res) = dcd.get_result() {
+                                let _ = remote_sender.send(res.into());
+                                decoder = None;
+                            }
+                        }
+                    },
+                    Ok(data) = remote_datagram_receiver.recv_async().fuse() => {
+                        let _ = conn_clone.send_datagram(data);
+                    }
+                }
+            }
+        });
 
         println!("connected to {:?}", conn.remote_node_id()?);
 
@@ -108,6 +144,12 @@ impl ErmisCallEndpoint {
 
         Ok(())
     }
+
+     pub fn close(&mut self) -> Option<()> {
+        self.cur_connection.take()?.close(VarInt::from_u32(0), &[0]);
+        Some(())
+    }
+
 
     pub fn get_current_connection(&self) -> Option<Connection> {
         self.cur_connection.clone()
@@ -117,6 +159,37 @@ impl ErmisCallEndpoint {
         let endpoint = self.endpoint.clone();
         if let Some(incoming) = endpoint.accept().await {
             let conn = incoming.accept()?.await?;
+            let remote_datagram_sender = self.remote_datagram_sender.clone();
+        let remote_datagram_receiver = self.remote_datagram_receiver.clone();
+        let remote_sender = self.remote_sender.clone();
+        let conn_clone = conn.clone();
+            spawn_local(async move {
+            let mut decoder = None;
+            loop {
+                tokio::select! {
+                    Ok(data) = conn_clone.read_datagram().fuse() => {
+                        let _ = remote_datagram_sender.send(data.clone());
+                        if data.len() == 12 {
+                            let transmission_info =
+                                ObjectTransmissionInformation::deserialize(&data[..12].try_into().unwrap());
+                            decoder = Some(Decoder::new(transmission_info));
+                            continue;
+                        }
+                        if let Some(dcd) = &mut decoder {
+                            let encoding_packet = EncodingPacket::deserialize(&data);
+                            dcd.add_new_packet(encoding_packet);
+                            if let Some(res) = dcd.get_result() {
+                                let _ = remote_sender.send(res.into());
+                                decoder = None;
+                            }
+                        }
+                    },
+                    Ok(data) = remote_datagram_receiver.recv_async().fuse() => {
+                        let _ = conn_clone.send_datagram(data);
+                    }
+                }
+            }
+        });
             self.cur_connection = Some(conn);
         } else {
             anyhow::bail!("cannot accept");
@@ -250,6 +323,84 @@ impl ErmisCallEndpoint {
     pub async fn async_recv(&mut self) -> Result<Bytes> {
         let bytes = self.local_receiver.recv_async().await?;
         Ok(bytes)
+    }
+
+    pub async fn async_send_raptorq(&self, data: &[u8]) -> Result<()> {
+        let mtu = self
+            .cur_connection
+            .as_ref()
+            .unwrap()
+            .max_datagram_size()
+            .unwrap();
+        let repair_packets_per_block = (data.len() as f64 / (mtu - 100) as f64) * 0.1;
+        let encoder = Encoder::with_defaults(data, mtu as u16 - 100);
+        self.local_datagram_sender
+            .send(Bytes::copy_from_slice(&encoder.get_config().serialize()))?;
+        for encoded_packet in encoder.get_encoded_packets(repair_packets_per_block.ceil() as u32) {
+            self.local_datagram_sender
+                .send_async(encoded_packet.serialize().into())
+                .await?;
+        }
+        Ok(())
+    }
+
+    pub fn send_raptorq(&self, data: &[u8]) -> Result<()> {
+        let mtu = self
+            .cur_connection
+            .as_ref()
+            .unwrap()
+            .max_datagram_size()
+            .unwrap();
+        let repair_packets_per_block = (data.len() as f64 / (mtu - 100) as f64) * 0.1;
+        println!("{}", repair_packets_per_block.ceil() as u32);
+        let encoder = Encoder::with_defaults(data, mtu as u16 - 100);
+        self.local_datagram_sender
+            .send(Bytes::copy_from_slice(&encoder.get_config().serialize()))?;
+        for encoded_packet in encoder.get_encoded_packets(repair_packets_per_block.ceil() as u32) {
+            self.local_datagram_sender
+                .send(encoded_packet.serialize().into())?;
+        }
+        Ok(())
+    }
+
+    pub async fn async_recv_raptorq(&self) -> Result<Bytes> {
+        let mut decoder = None;
+        while let Ok(datagram) = self.local_datagram_receiver.recv_async().await {
+            if datagram.len() == 12 {
+                let transmission_info =
+                    ObjectTransmissionInformation::deserialize(&datagram[..12].try_into().unwrap());
+                decoder = Some(Decoder::new(transmission_info));
+                continue;
+            }
+            if let Some(decoder) = &mut decoder {
+                let encoding_packet = EncodingPacket::deserialize(&datagram);
+                decoder.add_new_packet(encoding_packet);
+                if let Some(res) = decoder.get_result() {
+                    return Ok(res.into());
+                }
+            }
+        }
+        Err(anyhow::anyhow!("No data received"))
+    }
+
+    pub fn recv_raptorq(&self) -> Result<Bytes> {
+        let mut decoder = None;
+        while let Ok(datagram) = self.local_datagram_receiver.recv() {
+            if datagram.len() == 12 {
+                let transmission_info =
+                    ObjectTransmissionInformation::deserialize(&datagram[..12].try_into().unwrap());
+                decoder = Some(Decoder::new(transmission_info));
+                continue;
+            }
+            if let Some(decoder) = &mut decoder {
+                let encoding_packet = EncodingPacket::deserialize(&datagram);
+                decoder.add_new_packet(encoding_packet);
+                if let Some(res) = decoder.get_result() {
+                    return Ok(res.into());
+                }
+            }
+        }
+        Err(anyhow::anyhow!("No data received"))
     }
 
     pub fn cur_packet_loss(&self) -> Option<f64> {
