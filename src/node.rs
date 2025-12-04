@@ -178,10 +178,12 @@ impl ErmisCallEndpoint {
                             println!("Received a new stream");
                             let cl = remote_frame_channel_sender.clone();
                             let mut frame_receiver = FramedRead::new(stream, LengthDelimitedCodec::new());
-                            tokio::spawn (async move {
+                            spawn_local(async move {
                                 while let Some(Ok(frame)) = frame_receiver.next().await {
                                     println!("Received a new frame");
-                                    cl.send(frame.into()).unwrap();
+                                    if let Err(e) = cl.send(frame.into()) {
+                                        println!("error sending frame to channel: {}", e);
+                                    }
                                 }
                             });
                         },
