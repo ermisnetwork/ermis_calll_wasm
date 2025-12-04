@@ -198,19 +198,24 @@ impl ErmisCall {
 
     #[wasm_bindgen(js_name = asyncRecv)]
     pub async fn async_recv(&self) -> Result<Vec<u8>, JsValue> {
-        let receiver = self.local_receiver
-            .as_ref()
-            .ok_or_else(|| JsValue::from_str("Endpoint not initialized or local receiver not available"))?;
-        let bytes = receiver
+        // let receiver = self.local_receiver
+        //     .as_ref()
+        //     .ok_or_else(|| JsValue::from_str("Endpoint not initialized or local receiver not available"))?;
+
+        let recv = {
+            let inner = self.inner.lock();
+            let endpoint = inner
+                .as_ref()
+                .ok_or_else(|| JsValue::from_str("Endpoint not initialized or local receiver not available"))?;
+            endpoint.local_receiver.clone()
+        };
+        let bytes = recv
             .recv_async()
             .await
             .map_err(|e| JsValue::from_str(&format!("Failed to receive: {}", e)))?; 
         Ok(bytes.to_vec())
     }
 
-    // ============================================
-    // CONTROL PATH - WITH LOCK (ít dùng hơn)
-    // ============================================
 
     #[wasm_bindgen(js_name = sendKeyFrame)]
     pub fn send_key_frame(&self, data: &[u8]) -> Result<(), JsValue> {
@@ -220,7 +225,9 @@ impl ErmisCall {
             .ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?;
 
         ep.send_key_frame(data)
-            .map_err(|e| JsValue::from_str(&format!("Failed to send key frame: {}", e)))
+            .map_err(|e| JsValue::from_str(&format!("Failed to send key frame: {}", e)))?;
+        console_log!("Key frame sent from wasm");
+        Ok(())
     }
 
     #[wasm_bindgen(js_name = connectionType)]

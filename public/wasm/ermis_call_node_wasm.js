@@ -267,18 +267,6 @@ function passArray8ToWasm0(arg, malloc) {
     WASM_VECTOR_LEN = arg.length;
     return ptr;
 }
-function __wasm_bindgen_func_elem_6244(arg0, arg1) {
-    wasm.__wasm_bindgen_func_elem_6244(arg0, arg1);
-}
-
-function __wasm_bindgen_func_elem_2320(arg0, arg1, arg2) {
-    wasm.__wasm_bindgen_func_elem_2320(arg0, arg1, addHeapObject(arg2));
-}
-
-function __wasm_bindgen_func_elem_11787(arg0, arg1, arg2) {
-    wasm.__wasm_bindgen_func_elem_11787(arg0, arg1, addHeapObject(arg2));
-}
-
 function __wasm_bindgen_func_elem_12957(arg0, arg1) {
     wasm.__wasm_bindgen_func_elem_12957(arg0, arg1);
 }
@@ -287,8 +275,20 @@ function __wasm_bindgen_func_elem_5764(arg0, arg1) {
     wasm.__wasm_bindgen_func_elem_5764(arg0, arg1);
 }
 
+function __wasm_bindgen_func_elem_2320(arg0, arg1, arg2) {
+    wasm.__wasm_bindgen_func_elem_2320(arg0, arg1, addHeapObject(arg2));
+}
+
+function __wasm_bindgen_func_elem_6244(arg0, arg1) {
+    wasm.__wasm_bindgen_func_elem_6244(arg0, arg1);
+}
+
 function __wasm_bindgen_func_elem_13011(arg0, arg1, arg2) {
     wasm.__wasm_bindgen_func_elem_13011(arg0, arg1, addHeapObject(arg2));
+}
+
+function __wasm_bindgen_func_elem_11787(arg0, arg1, arg2) {
+    wasm.__wasm_bindgen_func_elem_11787(arg0, arg1, addHeapObject(arg2));
 }
 
 function __wasm_bindgen_func_elem_14479(arg0, arg1, arg2, arg3) {
