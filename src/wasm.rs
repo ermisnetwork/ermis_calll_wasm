@@ -128,9 +128,16 @@ impl ErmisCall {
 
     #[wasm_bindgen(js_name = sendControlFrame)]
     pub fn send_control_frame(&self, data: &[u8]) -> Result<(), JsValue> {
-        let sender = self.local_control_sender
-            .as_ref()
-            .ok_or_else(|| JsValue::from_str("Endpoint not initialized or local control sender not available"))?;
+        // let sender = self.local_control_sender
+        //     .as_ref()
+        //     .ok_or_else(|| JsValue::from_str("Endpoint not initialized or local control sender not available"))?;
+        let sender = {
+            let inner = self.inner.lock();
+            let endpoint = inner
+                .as_ref()
+                .ok_or_else(|| JsValue::from_str("Endpoint not initialized or local receiver not available"))?;
+            endpoint.local_control_sender.clone()
+        };
 
         sender
             .send(Bytes::copy_from_slice(data))
@@ -139,9 +146,16 @@ impl ErmisCall {
 
     #[wasm_bindgen(js_name = sendDeltaFrame)]
     pub fn send_delta_frame(&self, data: &[u8]) -> Result<(), JsValue> {
-        let sender = self.local_sender
-            .as_ref()
-            .ok_or_else(|| JsValue::from_str("Endpoint not initialized or local sender not available"))?;
+        // let sender = self.local_sender
+        //     .as_ref()
+        //     .ok_or_else(|| JsValue::from_str("Endpoint not initialized or local sender not available"))?;
+        let sender = {
+            let inner = self.inner.lock();
+            let endpoint = inner
+                .as_ref()
+                .ok_or_else(|| JsValue::from_str("Endpoint not initialized or local receiver not available"))?;
+            endpoint.local_sender.clone()
+        };
 
         sender
             .send(Bytes::copy_from_slice(data))
@@ -150,9 +164,16 @@ impl ErmisCall {
 
     #[wasm_bindgen(js_name = sendAudioFrame)]
     pub fn send_audio_frame(&self, data: &[u8]) -> Result<(), JsValue> {
-        let sender = self.local_sender
-            .as_ref()
-            .ok_or_else(|| JsValue::from_str("Endpoint not initialized or local sender not available"))?;
+        // let sender = self.local_sender
+        //     .as_ref()
+        //     .ok_or_else(|| JsValue::from_str("Endpoint not initialized or local sender not available"))?;
+        let sender = {
+            let inner = self.inner.lock();
+            let endpoint = inner
+                .as_ref()
+                .ok_or_else(|| JsValue::from_str("Endpoint not initialized or local receiver not available"))?;
+            endpoint.local_sender.clone()
+        };
 
         sender
             .send(Bytes::copy_from_slice(data))
