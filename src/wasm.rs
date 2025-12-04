@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use flume::{Receiver, Sender};
+use flume_overwrite::OverwriteSender;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -20,10 +20,7 @@ macro_rules! console_log {
 #[wasm_bindgen]
 pub struct ErmisCall {
     inner: Arc<Mutex<Option<ErmisCallEndpoint>>>,
-    local_sender: Option<Sender<Bytes>>,
-    local_receiver: Option<Receiver<Bytes>>,
-    local_control_sender: Option<Sender<Bytes>>,
-    new_gop_notifier: Option<Sender<()>>,
+    new_gop_notifier: Option<OverwriteSender<()>>,
 }
 
 #[wasm_bindgen]
@@ -32,9 +29,6 @@ impl ErmisCall {
     pub fn new() -> Self {
         Self {
             inner: Arc::new(Mutex::new(None)),
-            local_sender: None,
-            local_receiver: None,
-            local_control_sender: None,
             new_gop_notifier: None,
         }
     }
@@ -57,10 +51,6 @@ impl ErmisCall {
         let endpoint = ErmisCallEndpoint::new(&url_refs, array.as_ref()).await
             .map_err(|e| JsValue::from_str(&format!("Failed to spawn: {}", e)))?;
 
-   
-        self.local_sender = Some(endpoint.local_sender.clone());
-        self.local_receiver = Some(endpoint.local_receiver.clone());
-        self.local_control_sender = Some(endpoint.local_control_sender.clone());
         self.new_gop_notifier = Some(endpoint.new_gop_notifier.clone());
 
         let mut inner = self.inner.lock();
@@ -122,15 +112,9 @@ impl ErmisCall {
         Ok(())
     }
 
-    // ============================================
-    // FAST PATH - NO LOCK - ZERO COPY
-    // ============================================
 
     #[wasm_bindgen(js_name = sendControlFrame)]
     pub fn send_control_frame(&self, data: &[u8]) -> Result<(), JsValue> {
-        // let sender = self.local_control_sender
-        //     .as_ref()
-        //     .ok_or_else(|| JsValue::from_str("Endpoint not initialized or local control sender not available"))?;
         let sender = {
             let inner = self.inner.lock();
             let endpoint = inner
@@ -146,9 +130,6 @@ impl ErmisCall {
 
     #[wasm_bindgen(js_name = sendDeltaFrame)]
     pub fn send_delta_frame(&self, data: &[u8]) -> Result<(), JsValue> {
-        // let sender = self.local_sender
-        //     .as_ref()
-        //     .ok_or_else(|| JsValue::from_str("Endpoint not initialized or local sender not available"))?;
         let sender = {
             let inner = self.inner.lock();
             let endpoint = inner
@@ -164,9 +145,6 @@ impl ErmisCall {
 
     #[wasm_bindgen(js_name = sendAudioFrame)]
     pub fn send_audio_frame(&self, data: &[u8]) -> Result<(), JsValue> {
-        // let sender = self.local_sender
-        //     .as_ref()
-        //     .ok_or_else(|| JsValue::from_str("Endpoint not initialized or local sender not available"))?;
         let sender = {
             let inner = self.inner.lock();
             let endpoint = inner
@@ -193,35 +171,25 @@ impl ErmisCall {
 
     #[wasm_bindgen]
     pub fn recv(&self) -> Result<Vec<u8>, JsValue> {
-        let receiver = self.local_receiver
-            .as_ref()
-            .ok_or_else(|| JsValue::from_str("Endpoint not initialized or local receiver not available"))?;
+        let recv = {
+            let inner = self.inner.lock();
+            let endpoint = inner
+                .as_ref()
+                .ok_or_else(|| JsValue::from_str("Endpoint not initialized or local receiver not available"))?;
+            endpoint.local_receiver.clone()
+        };  
 
-        let bytes = receiver
+        let bytes = recv
             .recv()
             .map_err(|e| JsValue::from_str(&format!("Failed to receive: {}", e)))?;
 
         Ok(bytes.to_vec())
     }
 
-    // #[wasm_bindgen(js_name = tryRecv)]
-    // pub fn try_recv(&self) -> Result<Option<Vec<u8>>, JsValue> {
-    //     let receiver = self.local_receiver
-    //         .as_ref()
-    //         .ok_or_else(|| JsValue::from_str("Endpoint not initialized or local receiver not available"))?;
 
-    //     match receiver.try_recv() {
-    //         Ok(bytes) => Ok(Some(bytes.to_vec())),
-    //         Err(flume::TryRecvError::Empty) => Ok(None),
-    //         Err(e) => Err(JsValue::from_str(&format!("Failed to receive: {}", e))),
-    //     }
-    // }
 
     #[wasm_bindgen(js_name = asyncRecv)]
     pub async fn async_recv(&self) -> Result<Vec<u8>, JsValue> {
-        // let receiver = self.local_receiver
-        //     .as_ref()
-        //     .ok_or_else(|| JsValue::from_str("Endpoint not initialized or local receiver not available"))?;
 
         let recv = {
             let inner = self.inner.lock();
@@ -273,15 +241,6 @@ impl ErmisCall {
         ep.cur_packet_loss()
     }
 
-    // #[wasm_bindgen(js_name = isConnected)]
-    // pub fn is_connected(&self) -> bool {
-    //     let endpoint = self.inner.lock();
-    //     if let Some(ep) = endpoint.as_ref() {
-    //         ep.is_connected()
-    //     } else {
-    //         false
-    //     }
-    // }
 
     #[wasm_bindgen(js_name = networkChange)]
     pub fn network_change(&self) {

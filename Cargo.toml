@@ -44,6 +44,7 @@ rand = "0.8.5"
 parking_lot = "0.12.5"
 
 raptorq = "2.0.0"
+flume-overwrite = "0.1.0"
 
 [features]
 cli = ["tokio/full", "dep:clap"]
