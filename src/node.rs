@@ -1,25 +1,22 @@
-use std::{ str::FromStr, time::Duration };
+use std::{str::FromStr, time::Duration};
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
+use flume::{Receiver, Sender};
 use iroh::{
-    Endpoint,
-    NodeAddr,
-    RelayMap,
-    RelayMode,
-    RelayUrl,
-    SecretKey,
-    endpoint::{  Connection, ConnectionType },
+    Endpoint, NodeAddr, RelayMap, RelayMode, RelayUrl, SecretKey,
+    endpoint::{Connection, ConnectionType},
 };
 use iroh_quinn_proto::VarInt;
-use n0_future::StreamExt;
-use flume::{ Receiver, Sender };
+// use n0_future::StreamExt;
+use futures::{StreamExt as _, sink::SinkExt};
 
-use tokio_util::{ bytes::Bytes, codec::{ FramedRead, FramedWrite, LengthDelimitedCodec } };
+use tokio_util::{
+    bytes::Bytes,
+    codec::{FramedRead, FramedWrite, LengthDelimitedCodec},
+};
 
-use base64::{ Engine, prelude::BASE64_STANDARD };
-use futures::{ FutureExt, SinkExt, select };
+use base64::{Engine, prelude::BASE64_STANDARD};
 use wasm_bindgen_futures::spawn_local;
-use raptorq::{Decoder, Encoder, EncodingPacket, ObjectTransmissionInformation};
 
 const ALPN: &[u8] = b"ermis-call";
 
@@ -36,10 +33,9 @@ pub struct ErmisCallEndpoint {
     pub local_receiver: Receiver<Bytes>,
     pub remote_sender: Sender<Bytes>,
     pub remote_receiver: Receiver<Bytes>,
-    pub local_datagram_sender: Sender<Bytes>,
-    pub local_datagram_receiver: Receiver<Bytes>,
-    pub remote_datagram_sender: Sender<Bytes>,
-    pub remote_datagram_receiver: Receiver<Bytes>,
+    pub local_control_sender: Sender<Bytes>,
+    pub remote_control_receiver: Receiver<Bytes>,
+    pub new_gop_notifier: Sender<()>,
 }
 
 impl ErmisCallEndpoint {
@@ -50,7 +46,8 @@ impl ErmisCallEndpoint {
             let mut rng = rand::rngs::OsRng;
             SecretKey::generate(&mut rng)
         };
-        let endpoint = Endpoint::builder().relay_mode(RelayMode::Custom(RelayMap::from_iter(
+        let endpoint = Endpoint::builder()
+            .relay_mode(RelayMode::Custom(RelayMap::from_iter(
                 relay_urls
                     .iter()
                     .map(|url| RelayUrl::from_str(url).unwrap()),
@@ -61,8 +58,8 @@ impl ErmisCallEndpoint {
             .await?;
         let (local_sender, remote_receiver) = flume::unbounded();
         let (remote_sender, local_receiver) = flume::unbounded();
-        let (remote_datagram_sender, local_datagram_receiver) = flume::unbounded();
-        let (local_datagram_sender, remote_datagram_receiver) = flume::unbounded();
+        let (local_control_sender, remote_control_receiver) = flume::unbounded();
+        let (new_gop_notifier, _) = flume::bounded(1);
         Ok(Self {
             endpoint,
             cur_connection: None,
@@ -70,16 +67,29 @@ impl ErmisCallEndpoint {
             local_receiver,
             remote_sender,
             remote_receiver,
-            local_datagram_sender,
-            local_datagram_receiver,
-            remote_datagram_sender,
-            remote_datagram_receiver,
+            local_control_sender,
+            remote_control_receiver,
+            new_gop_notifier,
         })
     }
 
-   
+    pub async fn get_local_endpoint_addr(&self) -> Result<String> {
+        let addr_bytes = bitcode::serialize(&self.endpoint.node_addr().await?)?;
+        let addr_str = base64::prelude::BASE64_STANDARD.encode(addr_bytes);
+        Ok(addr_str)
+    }
 
+    pub fn close_connection(&mut self) -> Option<()> {
+        self.cur_connection.take()?.close(VarInt::from_u32(0), &[0]);
+        Some(())
+    }
 
+    pub fn network_change(&mut self) {
+        let ep = self.endpoint.clone();
+        spawn_local(async move {
+            ep.network_change().await;
+        });
+    }
 
     pub fn connection_type(&self) -> Option<ConnectionType> {
         if let Some(conn) = self.cur_connection.as_ref() {
@@ -91,13 +101,15 @@ impl ErmisCallEndpoint {
     }
 
     pub fn round_trip_time(&self) -> Option<Duration> {
-        if let Some(conn) = self.cur_connection.as_ref() { Some(conn.rtt()) } else { None }
+        if let Some(conn) = self.cur_connection.as_ref() {
+            Some(conn.rtt())
+        } else {
+            None
+        }
     }
 
-    pub async fn get_local_endpoint_addr(&self) -> Result<String> {
-        let addr_bytes = bitcode::serialize(&self.endpoint.node_addr().await?)?;
-        let addr_str = base64::prelude::BASE64_STANDARD.encode(addr_bytes);
-        Ok(addr_str)
+    pub fn get_current_connection(&self) -> Option<Connection> {
+        self.cur_connection.clone()
     }
 
     pub async fn connect(&mut self, addr: &str) -> Result<()> {
@@ -106,33 +118,35 @@ impl ErmisCallEndpoint {
         let addr: NodeAddr = bitcode::deserialize(&addr_bytes)?;
         println!("connecting to {:?}", addr);
         let conn = endpoint.connect(addr, ALPN).await?;
-         let remote_datagram_sender = self.remote_datagram_sender.clone();
-        let remote_datagram_receiver = self.remote_datagram_receiver.clone();
-        let remote_sender = self.remote_sender.clone();
+        let (control_send_stream, control_recv_stream) = conn.open_bi().await?;
+        let mut control_sender = FramedWrite::new(control_send_stream, LengthDelimitedCodec::new());
+        let mut control_receiver =
+            FramedRead::new(control_recv_stream, LengthDelimitedCodec::new());
         let conn_clone = conn.clone();
+        let remote_control_channel_receiver = self.remote_control_receiver.clone();
+        let remote_frame_channel_sender = self.remote_sender.clone();
         spawn_local(async move {
-            let mut decoder = None;
             loop {
                 tokio::select! {
-                    Ok(data) = conn_clone.read_datagram().fuse() => {
-                       let _ = remote_datagram_sender.send(data.clone());
-                        if data.len() == 12 {
-                            let transmission_info =
-                                ObjectTransmissionInformation::deserialize(&data[..12].try_into().unwrap());
-                            decoder = Some(Decoder::new(transmission_info));
-                            continue;
-                        }
-                        if let Some(dcd) = &mut decoder {
-                            let encoding_packet = EncodingPacket::deserialize(&data);
-                            dcd.add_new_packet(encoding_packet);
-                            if let Some(res) = dcd.get_result() {
-                                let _ = remote_sender.send(res.into());
-                                decoder = None;
+                    Ok(stream) = conn_clone.accept_uni() => {
+                        let cl = remote_frame_channel_sender.clone();
+                        let mut frame_receiver = FramedRead::new(stream, LengthDelimitedCodec::new());
+                        spawn_local(async move {
+                            while let Some(Ok(frame)) = frame_receiver.next().await {
+                                cl.send(frame.into()).unwrap();
                             }
-                        }
+                        });
                     },
-                    Ok(data) = remote_datagram_receiver.recv_async().fuse() => {
-                        let _ = conn_clone.send_datagram(data);
+                    Some(Ok(control_frame)) = control_receiver.next() => {
+                       if let Err(e) = remote_frame_channel_sender.send(control_frame.freeze()) {
+                           println!("error sending control frame: {}", e);
+                        }
+                }
+                    Ok(control_frame) = remote_control_channel_receiver.recv_async() => {
+                        println!("sending control frame");
+                        if let Err(e) = control_sender.send(control_frame).await {
+                            println!("error sending control frame: {}", e);
+                        }
                     }
                 }
             }
@@ -145,51 +159,45 @@ impl ErmisCallEndpoint {
         Ok(())
     }
 
-     pub fn close(&mut self) -> Option<()> {
-        self.cur_connection.take()?.close(VarInt::from_u32(0), &[0]);
-        Some(())
-    }
-
-
-    pub fn get_current_connection(&self) -> Option<Connection> {
-        self.cur_connection.clone()
-    }
-
     pub async fn accept_connection(&mut self) -> Result<()> {
         let endpoint = self.endpoint.clone();
         if let Some(incoming) = endpoint.accept().await {
             let conn = incoming.accept()?.await?;
-            let remote_datagram_sender = self.remote_datagram_sender.clone();
-        let remote_datagram_receiver = self.remote_datagram_receiver.clone();
-        let remote_sender = self.remote_sender.clone();
-        let conn_clone = conn.clone();
+            let (control_send_stream, control_recv_stream) = conn.accept_bi().await?;
+            let mut control_sender =
+                FramedWrite::new(control_send_stream, LengthDelimitedCodec::new());
+            let mut control_receiver =
+                FramedRead::new(control_recv_stream, LengthDelimitedCodec::new());
+            let remote_control_channel_receiver = self.remote_control_receiver.clone();
+            let remote_frame_channel_sender = self.remote_sender.clone();
+            let conn_clone = conn.clone();
             spawn_local(async move {
-            let mut decoder = None;
-            loop {
-                tokio::select! {
-                    Ok(data) = conn_clone.read_datagram().fuse() => {
-                        let _ = remote_datagram_sender.send(data.clone());
-                        if data.len() == 12 {
-                            let transmission_info =
-                                ObjectTransmissionInformation::deserialize(&data[..12].try_into().unwrap());
-                            decoder = Some(Decoder::new(transmission_info));
-                            continue;
+                loop {
+                    tokio::select! {
+                        Ok(stream) = conn_clone.accept_uni() => {
+                            println!("Received a new stream");
+                            let cl = remote_frame_channel_sender.clone();
+                            let mut frame_receiver = FramedRead::new(stream, LengthDelimitedCodec::new());
+                            tokio::spawn (async move {
+                                while let Some(Ok(frame)) = frame_receiver.next().await {
+                                    println!("Received a new frame");
+                                    cl.send(frame.into()).unwrap();
+                                }
+                            });
+                        },
+                        Some(Ok(control_frame)) = control_receiver.next() => {
+                           if let Err(e) = remote_frame_channel_sender.send(control_frame.freeze()) {
+                               println!("error sending control frame: {}", e);
+                           }
                         }
-                        if let Some(dcd) = &mut decoder {
-                            let encoding_packet = EncodingPacket::deserialize(&data);
-                            dcd.add_new_packet(encoding_packet);
-                            if let Some(res) = dcd.get_result() {
-                                let _ = remote_sender.send(res.into());
-                                decoder = None;
+                        Ok(control_frame) = remote_control_channel_receiver.recv_async() => {
+                            if let Err(e) = control_sender.send(control_frame).await {
+                                println!("error sending control frame: {}", e);
                             }
                         }
-                    },
-                    Ok(data) = remote_datagram_receiver.recv_async().fuse() => {
-                        let _ = conn_clone.send_datagram(data);
                     }
                 }
-            }
-        });
+            });
             self.cur_connection = Some(conn);
         } else {
             anyhow::bail!("cannot accept");
@@ -198,120 +206,84 @@ impl ErmisCallEndpoint {
         Ok(())
     }
 
-    pub async fn accept_bidi_stream(&mut self) -> Result<()> {
-        let cur_connection = self.cur_connection.clone();
+    pub fn send_control_frame(&mut self, data: &[u8]) -> Result<()> {
+        self.local_control_sender
+            .send(Bytes::copy_from_slice(data))?;
+        Ok(())
+    }
 
-        let Some(conn) = &cur_connection else {
-            anyhow::bail!("Error accepting stream: No Connection established")
-        };
-        let remote_sender = self.remote_sender.clone();
-        let remote_receiver = self.remote_receiver.clone();
-        let conn = conn.clone();
+    pub async fn send_control_frame_async(&mut self, data: &[u8]) -> Result<()> {
+        self.local_control_sender
+            .send_async(Bytes::copy_from_slice(data))
+            .await?;
+        Ok(())
+    }
 
-        wasm_bindgen_futures::spawn_local(async move {
-            // tokio::spawn(async move {
-            println!("accepted bidi stream");
-            let (send_stream, recv_stream) = conn.accept_bi().await.unwrap();
-            let mut sender = FramedWrite::new(send_stream, LengthDelimitedCodec::new());
-            let mut receiver = FramedRead::new(recv_stream, LengthDelimitedCodec::new());
-
-            loop {
-                select! {
-            msg = receiver.next().fuse() => match msg {
-                Some(Ok(msg)) => {
-                    if let Err(e) = remote_sender.send_async(msg.freeze()).await {
-                        println!("Error sending message: {}", e);
-                        break;
+    pub fn send_key_frame(&mut self, data: &[u8]) -> Result<()> {
+        let conn = self
+            .cur_connection
+            .as_ref()
+            .ok_or(anyhow!("no existing quic connection"))?
+            .clone();
+        let key_frame = Bytes::copy_from_slice(data);
+        let remote_frame_receiver = self.remote_receiver.clone();
+        let _ = self.new_gop_notifier.send(());
+        let (new_gop_notifier, new_gop_watcher) = flume::bounded(1);
+        self.new_gop_notifier = new_gop_notifier;
+        spawn_local(async move {
+            if let Ok(stream) = conn.open_uni().await {
+                let mut frame_sender = FramedWrite::new(stream, LengthDelimitedCodec::new());
+                if let Err(e) = frame_sender.send(key_frame).await {
+                    println!("error sending key frame: {}", e);
+                }
+                if let Ok(next_frame) = remote_frame_receiver.recv_async().await {
+                    if let Err(e) = frame_sender.send(next_frame).await {
+                        println!("error sending next frame: {}", e);
                     }
                 }
-                Some(Err(e)) => {
-                    println!("Error receiving message: {}", e);
-                    break;
-                }
-                None => {
-                    println!("Receiver closed");
-                    break;
-                }
-            },
-            msg = remote_receiver.recv_async().fuse() => match msg {
-                Ok(msg) => {
-                    if let Err(e) = sender.send(msg).await {
-                        println!("Error sending message: {}", e);
-                        break;
+                loop {
+                    tokio::select! {
+                        Ok(()) = new_gop_watcher.recv_async() => {
+                            if let Err(e) =  frame_sender.into_inner().reset(12u8.into()) {
+                                println!("error resetting stream for new GOP: {}", e);
+                            }
+                            break;
+                        }
+                        Ok(frame) = remote_frame_receiver.recv_async() => {
+                            if let Err(e) = frame_sender.send(frame).await {
+                                println!("error sending frame: {}", e);
+                            }
+                        }
                     }
                 }
-                Err(e) => {
-                    println!("Error receiving message: {}", e);
-                    break;
-                }
-            }
-        }
+            } else {
+                println!("error opening uni stream for key frame");
             }
         });
         Ok(())
     }
 
-    pub async fn open_bidi_stream(&mut self) -> Result<()> {
-        let cur_connection = self.cur_connection.clone();
-
-        let Some(conn) = &cur_connection else {
-            anyhow::bail!("Error opening stream: No Connection established")
-        };
-
-        let remote_sender = self.remote_sender.clone();
-        let remote_receiver = self.remote_receiver.clone();
-        let conn = conn.clone();
-
-        wasm_bindgen_futures::spawn_local(async move {
-            println!("opened bidi stream");
-
-            let (send_stream, recv_stream) = conn.open_bi().await.unwrap();
-            let mut sender = FramedWrite::new(send_stream, LengthDelimitedCodec::new());
-            let mut receiver = FramedRead::new(recv_stream, LengthDelimitedCodec::new());
-
-            loop {
-                select! {
-            msg = receiver.next().fuse() => match msg {
-                Some(Ok(msg)) => {
-                    if let Err(e) = remote_sender.send_async(msg.freeze()).await {
-                        println!("Error sending message: {}", e);
-                        continue;
-                    }
-                }
-                Some(Err(e)) => {
-                    println!("Error receiving message: {}", e);
-                    break;
-                }
-                None => {
-                    println!("Receiver closed");
-                    break;
-                }
-            },
-            msg = remote_receiver.recv_async().fuse() => match msg {
-                Ok(msg) => {
-                    if let Err(e) = sender.send(msg).await {
-                        println!("Error sending message: {}", e);
-                        break;
-                    }
-                }
-                Err(e) => {
-                    println!("Error receiving message: {}", e);
-                    break;
-                }
-            }
-        }
-            }
-        });
-        Ok(())
-    }
-
-    pub fn send(&mut self, data: &[u8]) -> Result<()> {
+    pub fn send_delta_frame(&mut self, data: &[u8]) -> Result<()> {
         self.local_sender.send(Bytes::copy_from_slice(data))?;
         Ok(())
     }
 
-    pub async fn async_send(&mut self, data: &[u8]) -> Result<()> {
-        self.local_sender.send_async(Bytes::copy_from_slice(data)).await?;
+    pub async fn async_send_delta_frame(&mut self, data: &[u8]) -> Result<()> {
+        self.local_sender
+            .send_async(Bytes::copy_from_slice(data))
+            .await?;
+        Ok(())
+    }
+
+    pub fn send_audio_frame(&self, data: &[u8]) -> Result<()> {
+        self.local_sender.send(Bytes::copy_from_slice(data))?;
+        Ok(())
+    }
+
+    pub async fn async_send_audio_frame(&self, data: &[u8]) -> Result<()> {
+        self.local_sender
+            .send_async(Bytes::copy_from_slice(data))
+            .await?;
         Ok(())
     }
 
@@ -323,84 +295,6 @@ impl ErmisCallEndpoint {
     pub async fn async_recv(&mut self) -> Result<Bytes> {
         let bytes = self.local_receiver.recv_async().await?;
         Ok(bytes)
-    }
-
-    pub async fn async_send_raptorq(&self, data: &[u8]) -> Result<()> {
-        let mtu = self
-            .cur_connection
-            .as_ref()
-            .unwrap()
-            .max_datagram_size()
-            .unwrap();
-        let repair_packets_per_block = (data.len() as f64 / (mtu - 100) as f64) * 0.1;
-        let encoder = Encoder::with_defaults(data, mtu as u16 - 100);
-        self.local_datagram_sender
-            .send(Bytes::copy_from_slice(&encoder.get_config().serialize()))?;
-        for encoded_packet in encoder.get_encoded_packets(repair_packets_per_block.ceil() as u32) {
-            self.local_datagram_sender
-                .send_async(encoded_packet.serialize().into())
-                .await?;
-        }
-        Ok(())
-    }
-
-    pub fn send_raptorq(&self, data: &[u8]) -> Result<()> {
-        let mtu = self
-            .cur_connection
-            .as_ref()
-            .unwrap()
-            .max_datagram_size()
-            .unwrap();
-        let repair_packets_per_block = (data.len() as f64 / (mtu - 100) as f64) * 0.1;
-        println!("{}", repair_packets_per_block.ceil() as u32);
-        let encoder = Encoder::with_defaults(data, mtu as u16 - 100);
-        self.local_datagram_sender
-            .send(Bytes::copy_from_slice(&encoder.get_config().serialize()))?;
-        for encoded_packet in encoder.get_encoded_packets(repair_packets_per_block.ceil() as u32) {
-            self.local_datagram_sender
-                .send(encoded_packet.serialize().into())?;
-        }
-        Ok(())
-    }
-
-    pub async fn async_recv_raptorq(&self) -> Result<Bytes> {
-        let mut decoder = None;
-        while let Ok(datagram) = self.local_datagram_receiver.recv_async().await {
-            if datagram.len() == 12 {
-                let transmission_info =
-                    ObjectTransmissionInformation::deserialize(&datagram[..12].try_into().unwrap());
-                decoder = Some(Decoder::new(transmission_info));
-                continue;
-            }
-            if let Some(decoder) = &mut decoder {
-                let encoding_packet = EncodingPacket::deserialize(&datagram);
-                decoder.add_new_packet(encoding_packet);
-                if let Some(res) = decoder.get_result() {
-                    return Ok(res.into());
-                }
-            }
-        }
-        Err(anyhow::anyhow!("No data received"))
-    }
-
-    pub fn recv_raptorq(&self) -> Result<Bytes> {
-        let mut decoder = None;
-        while let Ok(datagram) = self.local_datagram_receiver.recv() {
-            if datagram.len() == 12 {
-                let transmission_info =
-                    ObjectTransmissionInformation::deserialize(&datagram[..12].try_into().unwrap());
-                decoder = Some(Decoder::new(transmission_info));
-                continue;
-            }
-            if let Some(decoder) = &mut decoder {
-                let encoding_packet = EncodingPacket::deserialize(&datagram);
-                decoder.add_new_packet(encoding_packet);
-                if let Some(res) = decoder.get_result() {
-                    return Ok(res.into());
-                }
-            }
-        }
-        Err(anyhow::anyhow!("No data received"))
     }
 
     pub fn cur_packet_loss(&self) -> Option<f64> {
