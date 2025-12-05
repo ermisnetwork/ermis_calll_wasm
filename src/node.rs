@@ -1,8 +1,7 @@
 use std::{str::FromStr, time::Duration};
 
 use anyhow::{Result, anyhow};
-use flume::Receiver;
-use flume_overwrite::OverwriteSender;
+use flume::{Receiver, Sender, TrySendError};
 use iroh::{
     Endpoint, NodeAddr, RelayMap, RelayMode, RelayUrl, SecretKey,
     endpoint::{Connection, ConnectionType},
@@ -21,22 +20,17 @@ use wasm_bindgen_futures::spawn_local;
 
 const ALPN: &[u8] = b"ermis-call";
 
-pub struct StreamHandle {
-    pub sender: OverwriteSender<Bytes>,
-    pub receiver: Receiver<Bytes>,
-}
-
 #[derive(Clone)]
 pub struct ErmisCallEndpoint {
     pub endpoint: Endpoint,
     pub cur_connection: Option<Connection>,
-    pub local_sender: OverwriteSender<Bytes>,
+    pub local_sender: Sender<Bytes>,
     pub local_receiver: Receiver<Bytes>,
-    pub remote_sender: OverwriteSender<Bytes>,
+    pub remote_sender: Sender<Bytes>,
     pub remote_receiver: Receiver<Bytes>,
-    pub local_control_sender: OverwriteSender<Bytes>,
+    pub local_control_sender: Sender<Bytes>,
     pub remote_control_receiver: Receiver<Bytes>,
-    pub new_gop_notifier: OverwriteSender<()>,
+    pub new_gop_notifier: Sender<()>,
 }
 
 impl ErmisCallEndpoint {
@@ -57,10 +51,10 @@ impl ErmisCallEndpoint {
             .alpns(vec![ALPN.to_vec()])
             .bind()
             .await?;
-        let (local_sender, remote_receiver) = flume_overwrite::bounded(10);
-        let (remote_sender, local_receiver) = flume_overwrite::bounded(10);
-        let (local_control_sender, remote_control_receiver) = flume_overwrite::bounded(10);
-        let (new_gop_notifier, _) = flume_overwrite::bounded(1);
+        let (local_sender, remote_receiver) = flume::bounded(60);
+        let (remote_sender, local_receiver) = flume::bounded(60);
+        let (local_control_sender, remote_control_receiver) = flume::bounded(60);
+        let (new_gop_notifier, _) = flume::bounded(1);
         Ok(Self {
             endpoint,
             cur_connection: None,
@@ -222,7 +216,7 @@ impl ErmisCallEndpoint {
         Ok(())
     }
 
-    pub fn send_key_frame(&mut self, data: &[u8]) -> Result<()> {
+    pub fn begin_with_gop(&mut self, data: &[u8]) -> Result<()> {
         let conn = self
             .cur_connection
             .as_ref()
@@ -231,7 +225,7 @@ impl ErmisCallEndpoint {
         let key_frame = Bytes::copy_from_slice(data);
         let remote_frame_receiver = self.remote_receiver.clone();
         let _ = self.new_gop_notifier.send(());
-        let (new_gop_notifier, new_gop_watcher) = flume_overwrite::bounded(1);
+        let (new_gop_notifier, new_gop_watcher) = flume::bounded(1);
         self.new_gop_notifier = new_gop_notifier;
         spawn_local(async move {
             if let Ok(stream) = conn.open_uni().await {

@@ -837,7 +837,6 @@ dependencies = [
  "clap",
  "console_error_panic_hook",
  "flume",
- "flume-overwrite",
  "futures",
  "getrandom 0.3.4",
  "iroh",
@@ -914,15 +913,6 @@ dependencies = [
  "futures-sink",
  "nanorand",
  "spin 0.9.8",
-]
-
-[[package]]
-name = "flume-overwrite"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c5a7f3f1b1a375756d3fdaf12f608b435861f5b15f0247d6185fd70425d693b8"
-dependencies = [
- "flume",
 ]
 
 [[package]]
@@ -2082,9 +2072,9 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 
 [[package]]
 name = "mio"
-version = "1.1.0"
+version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69d83b0086dc8ecf3ce9ae2874b2d1290252e2a30720bea58a5c6639b0092873"
+checksum = "a69bcab0ad47271a0234d9422b131806bf3968021e5dc9328caf2d4cd58557fc"
 dependencies = [
  "libc",
  "wasi",

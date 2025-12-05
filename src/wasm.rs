@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use flume_overwrite::OverwriteSender;
+use flume::{Sender, TrySendError};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -20,7 +20,7 @@ macro_rules! console_log {
 #[wasm_bindgen]
 pub struct ErmisCall {
     inner: Arc<Mutex<Option<ErmisCallEndpoint>>>,
-    new_gop_notifier: Option<OverwriteSender<()>>,
+    new_gop_notifier: Option<Sender<()>>,
 }
 
 #[wasm_bindgen]
@@ -128,8 +128,8 @@ impl ErmisCall {
             .map_err(|e| JsValue::from_str(&format!("Failed to send control frame: {}", e)))
     }
 
-    #[wasm_bindgen(js_name = sendDeltaFrame)]
-    pub fn send_delta_frame(&self, data: &[u8]) -> Result<(), JsValue> {
+
+    fn send_frame_inner(&self, data: Bytes) -> Result<(), JsValue> {
         let sender = {
             let inner = self.inner.lock();
             let endpoint = inner
@@ -137,25 +137,23 @@ impl ErmisCall {
                 .ok_or_else(|| JsValue::from_str("Endpoint not initialized or local receiver not available"))?;
             endpoint.local_sender.clone()
         };
-
-        sender
-            .send(Bytes::copy_from_slice(data))
-            .map_err(|e| JsValue::from_str(&format!("Failed to send delta frame: {}", e)))
+        let remote_receiver = {
+            let inner = self.inner.lock();
+            let endpoint = inner
+                .as_ref()
+                .ok_or_else(|| JsValue::from_str("Endpoint not initialized or local receiver not available"))?;
+            endpoint.remote_receiver.clone()
+        };
+        if let Err(TrySendError::Full(f)) = sender.try_send(data) {
+            let _ = remote_receiver.try_recv();
+            self.send_frame_inner(f)?;
+        }
+        Ok(())
     }
 
-    #[wasm_bindgen(js_name = sendAudioFrame)]
-    pub fn send_audio_frame(&self, data: &[u8]) -> Result<(), JsValue> {
-        let sender = {
-            let inner = self.inner.lock();
-            let endpoint = inner
-                .as_ref()
-                .ok_or_else(|| JsValue::from_str("Endpoint not initialized or local receiver not available"))?;
-            endpoint.local_sender.clone()
-        };
-
-        sender
-            .send(Bytes::copy_from_slice(data))
-            .map_err(|e| JsValue::from_str(&format!("Failed to send audio frame: {}", e)))
+    #[wasm_bindgen(js_name = sendFrame)]
+    pub fn send_frame(&self, data: &[u8]) -> Result<(), JsValue> {
+        self.send_frame_inner(Bytes::copy_from_slice(data))
     }
 
     #[wasm_bindgen(js_name = notifyNewGop)]
@@ -206,14 +204,14 @@ impl ErmisCall {
     }
 
 
-    #[wasm_bindgen(js_name = sendKeyFrame)]
-    pub fn send_key_frame(&self, data: &[u8]) -> Result<(), JsValue> {
+    #[wasm_bindgen(js_name = beginWithGop)]
+    pub fn begin_with_gop(&self, data: &[u8]) -> Result<(), JsValue> {
         let mut endpoint = self.inner.lock();
         let ep = endpoint
             .as_mut()
             .ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?;
 
-        ep.send_key_frame(data)
+        ep.begin_with_gop(data)
             .map_err(|e| JsValue::from_str(&format!("Failed to send key frame: {}", e)))?;
         console_log!("Key frame sent from wasm");
         Ok(())
