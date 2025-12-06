@@ -2,6 +2,7 @@ use bytes::Bytes;
 use flume::{Sender, TrySendError};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use wasm_bindgen_futures::js_sys::{self, Uint8Array};
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 
@@ -149,7 +150,7 @@ impl ErmisCall {
     }
 
     #[wasm_bindgen]
-    pub fn recv(&self) -> Result<Vec<u8>, JsValue> {
+    pub fn recv(&self) -> Result<Uint8Array, JsValue> {
         let recv = {
             let inner = self.inner.lock();
             let endpoint = inner
@@ -162,13 +163,13 @@ impl ErmisCall {
             .recv()
             .map_err(|e| JsValue::from_str(&format!("Failed to receive: {}", e)))?;
 
-        Ok(bytes.to_vec())
+        Ok(bytes.as_ref().into())
     }
 
 
 
     #[wasm_bindgen(js_name = asyncRecv)]
-    pub async fn async_recv(&self) -> Result<Vec<u8>, JsValue> {
+    pub async fn async_recv(&self) -> Result<Uint8Array, JsValue> {
 
         let recv = {
             let inner = self.inner.lock();
@@ -181,7 +182,7 @@ impl ErmisCall {
             .recv_async()
             .await
             .map_err(|e| JsValue::from_str(&format!("Failed to receive: {}", e)))?; 
-        Ok(bytes.to_vec())
+        Ok(bytes.as_ref().into())
     }
 
 
