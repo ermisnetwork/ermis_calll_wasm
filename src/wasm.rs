@@ -127,28 +127,9 @@ impl ErmisCall {
             .send(Bytes::copy_from_slice(data))
             .map_err(|e| JsValue::from_str(&format!("Failed to send control frame: {}", e)))
     }
-
-
-    fn send_frame_inner(&self, data: Bytes) -> Result<(), JsValue> {
-        let sender = {
-            let inner = self.inner.lock();
-            let endpoint = inner
-                .as_ref()
-                .ok_or_else(|| JsValue::from_str("Endpoint not initialized or local receiver not available"))?;
-            endpoint.local_sender.clone()
-        };
-        let remote_receiver = {
-            let inner = self.inner.lock();
-            let endpoint = inner
-                .as_ref()
-                .ok_or_else(|| JsValue::from_str("Endpoint not initialized or local receiver not available"))?;
-            endpoint.remote_receiver.clone()
-        };
-        if let Err(TrySendError::Full(f)) = sender.try_send(data) {
-            let _ = remote_receiver.try_recv();
-            self.send_frame_inner(f)?;
-        }
-        Ok(())
+    #[wasm_bindgen(js_name = sendAudioFrame)]
+    pub fn send_audio_frame(&self, data: &[u8]) -> Result<(), JsValue> {
+        self.send_audio_frame_inner(Bytes::copy_from_slice(data))
     }
 
     #[wasm_bindgen(js_name = sendFrame)]
@@ -246,6 +227,54 @@ impl ErmisCall {
         if let Some(ep) = endpoint.as_mut() {
             ep.network_change();
         }
+    }
+
+    
+}
+
+impl ErmisCall {
+   fn send_frame_inner(&self, data: Bytes) -> Result<(), JsValue> {
+        let sender = {
+            let inner = self.inner.lock();
+            let endpoint = inner
+                .as_ref()
+                .ok_or_else(|| JsValue::from_str("Endpoint not initialized or local receiver not available"))?;
+            endpoint.local_sender.clone()
+        };
+        let remote_receiver = {
+            let inner = self.inner.lock();
+            let endpoint = inner
+                .as_ref()
+                .ok_or_else(|| JsValue::from_str("Endpoint not initialized or local receiver not available"))?;
+            endpoint.remote_receiver.clone()
+        };
+        if let Err(TrySendError::Full(f)) = sender.try_send(data) {
+            let _ = remote_receiver.try_recv();
+            self.send_frame_inner(f)?;
+        }
+        Ok(())
+    }
+
+   fn send_audio_frame_inner(&self, data: Bytes) -> Result<(), JsValue> {
+        let sender = {
+            let inner = self.inner.lock();
+            let endpoint = inner
+                .as_ref()
+                .ok_or_else(|| JsValue::from_str("Endpoint not initialized or local receiver not available"))?;
+            endpoint.local_audio_sender.clone()
+        };
+        let remote_receiver = {
+            let inner = self.inner.lock();
+            let endpoint = inner
+                .as_ref()
+                .ok_or_else(|| JsValue::from_str("Endpoint not initialized or local receiver not available"))?;
+            endpoint.remote_audio_receiver.clone()
+        };
+        if let Err(TrySendError::Full(f)) = sender.try_send(data) {
+            let _ = remote_receiver.try_recv();
+            self.send_audio_frame_inner(f)?;
+        }
+        Ok(())
     }
 }
 

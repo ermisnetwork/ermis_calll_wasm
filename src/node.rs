@@ -1,7 +1,7 @@
 use std::{str::FromStr, time::Duration};
 
 use anyhow::{Result, anyhow};
-use flume::{Receiver, Sender, TrySendError};
+use flume::{Receiver, Sender};
 use iroh::{
     Endpoint, NodeAddr, RelayMap, RelayMode, RelayUrl, SecretKey,
     endpoint::{Connection, ConnectionType},
@@ -28,9 +28,13 @@ pub struct ErmisCallEndpoint {
     pub local_receiver: Receiver<Bytes>,
     pub remote_sender: Sender<Bytes>,
     pub remote_receiver: Receiver<Bytes>,
+    pub local_audio_sender: Sender<Bytes>,
+    pub remote_audio_receiver: Receiver<Bytes>,
     pub local_control_sender: Sender<Bytes>,
     pub remote_control_receiver: Receiver<Bytes>,
     pub new_gop_notifier: Sender<()>,
+    pub lost_packets: u64,
+    pub sent_packets: u64,
 }
 
 impl ErmisCallEndpoint {
@@ -54,6 +58,7 @@ impl ErmisCallEndpoint {
         let (local_sender, remote_receiver) = flume::bounded(60);
         let (remote_sender, local_receiver) = flume::bounded(60);
         let (local_control_sender, remote_control_receiver) = flume::bounded(60);
+        let (local_audio_sender, remote_audio_receiver) = flume::bounded(60);
         let (new_gop_notifier, _) = flume::bounded(1);
         Ok(Self {
             endpoint,
@@ -64,7 +69,11 @@ impl ErmisCallEndpoint {
             remote_receiver,
             local_control_sender,
             remote_control_receiver,
+            local_audio_sender,
+            remote_audio_receiver,
             new_gop_notifier,
+            lost_packets: 0,
+            sent_packets: 0,
         })
     }
 
@@ -120,6 +129,7 @@ impl ErmisCallEndpoint {
         let conn_clone = conn.clone();
         let remote_control_channel_receiver = self.remote_control_receiver.clone();
         let remote_frame_channel_sender = self.remote_sender.clone();
+        let remote_audio_receiver = self.remote_audio_receiver.clone();
         spawn_local(async move {
             loop {
                 tokio::select! {
@@ -132,11 +142,25 @@ impl ErmisCallEndpoint {
                             }
                         });
                     },
+                    // send control frames to local client
                     Some(Ok(control_frame)) = control_receiver.next() => {
                        if let Err(e) = remote_frame_channel_sender.send(control_frame.freeze()) {
                            println!("error sending control frame: {}", e);
                         }
-                }
+                    }
+                    // send audio datagrams to remote
+                    Ok(audio_frame) = remote_audio_receiver.recv_async() => {
+                        if let Err(e) = conn_clone.send_datagram(audio_frame) {
+                            println!("error sending audio datagram: {}", e);
+                        }
+                    },
+                    // read incoming datagrams and send to local client
+                    Ok(audio_frame) = conn_clone.read_datagram() => {
+                            if let Err(e) = remote_frame_channel_sender.send(audio_frame) {
+                                println!("error sending audio datagram to channel: {}", e);
+                            }
+                        }
+                    // send control frames to remote client
                     Ok(control_frame) = remote_control_channel_receiver.recv_async() => {
                         println!("sending control frame");
                         if let Err(e) = control_sender.send(control_frame).await {
@@ -165,6 +189,7 @@ impl ErmisCallEndpoint {
                 FramedRead::new(control_recv_stream, LengthDelimitedCodec::new());
             let remote_control_channel_receiver = self.remote_control_receiver.clone();
             let remote_frame_channel_sender = self.remote_sender.clone();
+            let remote_audio_receiver = self.remote_audio_receiver.clone();
             let conn_clone = conn.clone();
             spawn_local(async move {
                 loop {
@@ -186,6 +211,16 @@ impl ErmisCallEndpoint {
                            if let Err(e) = remote_frame_channel_sender.send(control_frame.freeze()) {
                                println!("error sending control frame: {}", e);
                            }
+                        }
+                        Ok(audio_frame) = remote_audio_receiver.recv_async() => {
+                            if let Err(e) = conn_clone.send_datagram(audio_frame) {
+                                println!("error sending audio datagram: {}", e);
+                            }
+                        },
+                        Ok(audio_frame) = conn_clone.read_datagram() => {
+                            if let Err(e) = remote_frame_channel_sender.send(audio_frame) {
+                                println!("error sending audio datagram to channel: {}", e);
+                            }
                         }
                         Ok(control_frame) = remote_control_channel_receiver.recv_async() => {
                             if let Err(e) = control_sender.send(control_frame).await {
@@ -260,30 +295,6 @@ impl ErmisCallEndpoint {
         Ok(())
     }
 
-    pub fn send_delta_frame(&mut self, data: &[u8]) -> Result<()> {
-        self.local_sender.send(Bytes::copy_from_slice(data))?;
-        Ok(())
-    }
-
-    pub async fn async_send_delta_frame(&mut self, data: &[u8]) -> Result<()> {
-        self.local_sender
-            .send_async(Bytes::copy_from_slice(data))
-            .await?;
-        Ok(())
-    }
-
-    pub fn send_audio_frame(&self, data: &[u8]) -> Result<()> {
-        self.local_sender.send(Bytes::copy_from_slice(data))?;
-        Ok(())
-    }
-
-    pub async fn async_send_audio_frame(&self, data: &[u8]) -> Result<()> {
-        self.local_sender
-            .send_async(Bytes::copy_from_slice(data))
-            .await?;
-        Ok(())
-    }
-
     pub fn recv(&mut self) -> Result<Bytes> {
         let bytes = self.local_receiver.recv()?;
         Ok(bytes)
@@ -294,10 +305,13 @@ impl ErmisCallEndpoint {
         Ok(bytes)
     }
 
-    pub fn cur_packet_loss(&self) -> Option<f64> {
+    pub fn cur_packet_loss(&mut self) -> Option<f64> {
         if let Some(conn) = &self.cur_connection {
-            let loss =
-                (conn.stats().path.lost_packets as f64) / (conn.stats().path.sent_packets as f64);
+            let lost_packets_since_last_check = conn.stats().path.lost_packets - self.lost_packets;
+            self.lost_packets = conn.stats().path.lost_packets;
+            let sent_packets_since_last_check = conn.stats().path.sent_packets - self.sent_packets;
+            self.sent_packets = conn.stats().path.sent_packets;
+            let loss = lost_packets_since_last_check as f64 / sent_packets_since_last_check as f64;
             Some(loss)
         } else {
             None
