@@ -114,7 +114,7 @@ impl ErmisCall {
 
 
     #[wasm_bindgen(js_name = sendControlFrame)]
-    pub fn send_control_frame(&self, data: &[u8]) -> Result<(), JsValue> {
+    pub fn send_control_frame(&self, data: Vec<u8>) -> Result<(), JsValue> {
         let sender = {
             let inner = self.inner.lock();
             let endpoint = inner
@@ -124,17 +124,17 @@ impl ErmisCall {
         };
 
         sender
-            .send(Bytes::copy_from_slice(data))
+            .send(data.into())
             .map_err(|e| JsValue::from_str(&format!("Failed to send control frame: {}", e)))
     }
     #[wasm_bindgen(js_name = sendAudioFrame)]
-    pub fn send_audio_frame(&self, data: &[u8]) -> Result<(), JsValue> {
-        self.send_audio_frame_inner(Bytes::copy_from_slice(data))
+    pub fn send_audio_frame(&self, data: Vec<u8>) -> Result<(), JsValue> {
+        self.send_audio_frame_inner(data.into())
     }
 
     #[wasm_bindgen(js_name = sendFrame)]
-    pub fn send_frame(&self, data: &[u8]) -> Result<(), JsValue> {
-        self.send_frame_inner(Bytes::copy_from_slice(data))
+    pub fn send_frame(&self, data: Vec<u8>) -> Result<(), JsValue> {
+        self.send_frame_inner(data.into())
     }
 
     #[wasm_bindgen(js_name = notifyNewGop)]
@@ -186,7 +186,7 @@ impl ErmisCall {
 
 
     #[wasm_bindgen(js_name = beginWithGop)]
-    pub fn begin_with_gop(&self, data: &[u8]) -> Result<(), JsValue> {
+    pub fn begin_with_gop(&self, data: Vec<u8>) -> Result<(), JsValue> {
         let mut endpoint = self.inner.lock();
         let ep = endpoint
             .as_mut()
@@ -229,7 +229,7 @@ impl ErmisCall {
         }
     }
 
-    
+
 }
 
 impl ErmisCall {

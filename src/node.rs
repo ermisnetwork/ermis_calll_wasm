@@ -238,26 +238,14 @@ impl ErmisCallEndpoint {
         Ok(())
     }
 
-    pub fn send_control_frame(&mut self, data: &[u8]) -> Result<()> {
-        self.local_control_sender
-            .send(Bytes::copy_from_slice(data))?;
-        Ok(())
-    }
 
-    pub async fn send_control_frame_async(&mut self, data: &[u8]) -> Result<()> {
-        self.local_control_sender
-            .send_async(Bytes::copy_from_slice(data))
-            .await?;
-        Ok(())
-    }
-
-    pub fn begin_with_gop(&mut self, data: &[u8]) -> Result<()> {
+    pub fn begin_with_gop(&mut self, data: Vec<u8>) -> Result<()> {
         let conn = self
             .cur_connection
             .as_ref()
             .ok_or(anyhow!("no existing quic connection"))?
             .clone();
-        let key_frame = Bytes::copy_from_slice(data);
+        let key_frame = data.into();
         let remote_frame_receiver = self.remote_receiver.clone();
         let _ = self.new_gop_notifier.send(());
         let (new_gop_notifier, new_gop_watcher) = flume::bounded(1);
