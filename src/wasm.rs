@@ -40,8 +40,13 @@ impl ErmisCall {
         relay_urls: JsValue,
         secret_key: Option<Vec<u8>>,
     ) -> Result<(), JsValue> {
-        let urls: Vec<String> = serde_wasm_bindgen::from_value(relay_urls)
-            .map_err(|e| JsValue::from_str(&format!("Invalid relay URLs: {}", e)))?;
+        let urls: Vec<String> = match serde_wasm_bindgen::from_value(relay_urls)
+            .map_err(|e| JsValue::from_str(&format!("Invalid relay URLs: {}", e))) {
+            Ok(urls) => urls,
+            Err(e) => {
+                console_log!("Invalid relay URLs: {:?}", e);
+                return Err(e)},
+            };
 
         let url_refs: Vec<&str> = urls.iter().map(|s| s.as_str()).collect();
 
@@ -49,8 +54,13 @@ impl ErmisCall {
             .as_deref()
             .and_then(|v| v.try_into().ok());
 
-        let endpoint = ErmisCallEndpoint::new(&url_refs, array.as_ref()).await
-            .map_err(|e| JsValue::from_str(&format!("Failed to spawn: {}", e)))?;
+        let endpoint = match ErmisCallEndpoint::new(&url_refs, array.as_ref()).await
+            .map_err(|e| JsValue::from_str(&format!("Failed to spawn: {}", e))) {
+            Ok(ep) => ep,
+            Err(e) => {
+                console_log!("Failed to spawn: {:?}", e);
+                return Err(e)},
+            };
 
         self.new_gop_notifier = Some(endpoint.new_gop_notifier.clone());
 
