@@ -77,6 +77,11 @@ impl ErmisCallEndpoint {
         })
     }
 
+    pub async fn close_endpoint(&self) -> Result<()> {
+        self.endpoint.close().await;
+        Ok(())
+    }
+
     pub async fn get_local_endpoint_addr(&self) -> Result<String> {
         let addr_bytes = bitcode::serialize(&self.endpoint.node_addr().await?)?;
         let addr_str = base64::prelude::BASE64_STANDARD.encode(addr_bytes);

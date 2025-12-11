@@ -2,7 +2,7 @@ use bytes::Bytes;
 use flume::{Sender, TrySendError};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use wasm_bindgen_futures::js_sys::{self, Uint8Array};
+use wasm_bindgen_futures::js_sys::Uint8Array;
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 
@@ -92,6 +92,20 @@ impl ErmisCall {
             .map_err(|e| JsValue::from_str(&format!("Failed to connect: {}", e)))?;
 
         console_log!("Connected to peer");
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = closeEndpoint)]
+    pub async fn close_endpoint(&self) -> Result<(), JsValue> {
+        let endpoint = self.inner.lock();
+        let ep = endpoint
+            .as_ref()
+            .ok_or_else(|| JsValue::from_str("Endpoint not initialized"))?;
+
+        ep.close_endpoint().await
+            .map_err(|e| JsValue::from_str(&format!("Failed to close endpoint: {}", e)))?;
+
+        console_log!("Endpoint closed");
         Ok(())
     }
 
