@@ -19,6 +19,79 @@ use base64::{Engine, prelude::BASE64_STANDARD};
 use wasm_bindgen_futures::spawn_local;
 
 const ALPN: &[u8] = b"ermis-call";
+const STREAM_KIND_AUDIO: u8 = 0x01;
+const STREAM_KIND_VIDEO: u8 = 0x02;
+
+fn spawn_uni_stream_receiver(conn: Connection, remote_frame_channel_sender: Sender<Bytes>) {
+    spawn_local(async move {
+        loop {
+            match conn.accept_uni().await {
+                Ok(mut stream) => {
+                    let cl = remote_frame_channel_sender.clone();
+                    spawn_local(async move {
+                        let mut stream_kind = [0u8; 1];
+                        if let Err(e) = stream.read_exact(&mut stream_kind).await {
+                            println!("error reading stream kind: {}", e);
+                            return;
+                        }
+
+                        match stream_kind[0] {
+                            STREAM_KIND_AUDIO | STREAM_KIND_VIDEO => {
+                                let mut frame_receiver =
+                                    FramedRead::new(stream, LengthDelimitedCodec::new());
+                                while let Some(frame) = frame_receiver.next().await {
+                                    match frame {
+                                        Ok(frame) => {
+                                            if let Err(e) = cl.send(frame.into()) {
+                                                println!("error sending frame to channel: {}", e);
+                                                break;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            println!("error reading frame from uni stream: {}", e);
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            kind => {
+                                println!("unknown uni stream kind: {}", kind);
+                            }
+                        }
+                    });
+                }
+                Err(e) => {
+                    println!("error accepting uni stream: {}", e);
+                    break;
+                }
+            }
+        }
+    });
+}
+
+fn spawn_audio_stream_sender(conn: Connection, remote_audio_receiver: Receiver<Bytes>) {
+    spawn_local(async move {
+        match conn.open_uni().await {
+            Ok(mut stream) => {
+                if let Err(e) = stream.write_all(&[STREAM_KIND_AUDIO]).await {
+                    println!("error writing audio stream kind: {}", e);
+                    return;
+                }
+
+                let mut audio_sender = FramedWrite::new(stream, LengthDelimitedCodec::new());
+                while let Ok(audio_frame) = remote_audio_receiver.recv_async().await {
+                    if let Err(e) = audio_sender.send(audio_frame).await {
+                        println!("error sending audio frame: {}", e);
+                        break;
+                    }
+                }
+            }
+            Err(e) => {
+                println!("error opening uni stream for audio: {}", e);
+            }
+        }
+    });
+}
 
 #[derive(Clone)]
 pub struct ErmisCallEndpoint {
@@ -131,40 +204,22 @@ impl ErmisCallEndpoint {
         let mut control_sender = FramedWrite::new(control_send_stream, LengthDelimitedCodec::new());
         let mut control_receiver =
             FramedRead::new(control_recv_stream, LengthDelimitedCodec::new());
-        let conn_clone = conn.clone();
         let remote_control_channel_receiver = self.remote_control_receiver.clone();
         let remote_frame_channel_sender = self.remote_sender.clone();
         let remote_audio_receiver = self.remote_audio_receiver.clone();
+
+        spawn_uni_stream_receiver(conn.clone(), remote_frame_channel_sender.clone());
+        spawn_audio_stream_sender(conn.clone(), remote_audio_receiver);
+
         spawn_local(async move {
             loop {
                 tokio::select! {
-                    Ok(stream) = conn_clone.accept_uni() => {
-                        let cl = remote_frame_channel_sender.clone();
-                        let mut frame_receiver = FramedRead::new(stream, LengthDelimitedCodec::new());
-                        spawn_local(async move {
-                            while let Some(Ok(frame)) = frame_receiver.next().await {
-                                cl.send(frame.into()).unwrap();
-                            }
-                        });
-                    },
                     // send control frames to local client
                     Some(Ok(control_frame)) = control_receiver.next() => {
                        if let Err(e) = remote_frame_channel_sender.send(control_frame.freeze()) {
                            println!("error sending control frame: {}", e);
                         }
                     }
-                    // send audio datagrams to remote
-                    Ok(audio_frame) = remote_audio_receiver.recv_async() => {
-                        if let Err(e) = conn_clone.send_datagram(audio_frame) {
-                            println!("error sending audio datagram: {}", e);
-                        }
-                    },
-                    // read incoming datagrams and send to local client
-                    Ok(audio_frame) = conn_clone.read_datagram() => {
-                            if let Err(e) = remote_frame_channel_sender.send(audio_frame) {
-                                println!("error sending audio datagram to channel: {}", e);
-                            }
-                        }
                     // send control frames to remote client
                     Ok(control_frame) = remote_control_channel_receiver.recv_async() => {
                         println!("sending control frame");
@@ -195,37 +250,17 @@ impl ErmisCallEndpoint {
             let remote_control_channel_receiver = self.remote_control_receiver.clone();
             let remote_frame_channel_sender = self.remote_sender.clone();
             let remote_audio_receiver = self.remote_audio_receiver.clone();
-            let conn_clone = conn.clone();
+
+            spawn_uni_stream_receiver(conn.clone(), remote_frame_channel_sender.clone());
+            spawn_audio_stream_sender(conn.clone(), remote_audio_receiver);
+
             spawn_local(async move {
                 loop {
                     tokio::select! {
-                        Ok(stream) = conn_clone.accept_uni() => {
-                            println!("Received a new stream");
-                            let cl = remote_frame_channel_sender.clone();
-                            let mut frame_receiver = FramedRead::new(stream, LengthDelimitedCodec::new());
-                            spawn_local(async move {
-                                while let Some(Ok(frame)) = frame_receiver.next().await {
-                                    println!("Received a new frame");
-                                    if let Err(e) = cl.send(frame.into()) {
-                                        println!("error sending frame to channel: {}", e);
-                                    }
-                                }
-                            });
-                        },
                         Some(Ok(control_frame)) = control_receiver.next() => {
                            if let Err(e) = remote_frame_channel_sender.send(control_frame.freeze()) {
                                println!("error sending control frame: {}", e);
                            }
-                        }
-                        Ok(audio_frame) = remote_audio_receiver.recv_async() => {
-                            if let Err(e) = conn_clone.send_datagram(audio_frame) {
-                                println!("error sending audio datagram: {}", e);
-                            }
-                        },
-                        Ok(audio_frame) = conn_clone.read_datagram() => {
-                            if let Err(e) = remote_frame_channel_sender.send(audio_frame) {
-                                println!("error sending audio datagram to channel: {}", e);
-                            }
                         }
                         Ok(control_frame) = remote_control_channel_receiver.recv_async() => {
                             if let Err(e) = control_sender.send(control_frame).await {
@@ -243,7 +278,6 @@ impl ErmisCallEndpoint {
         Ok(())
     }
 
-
     pub fn begin_with_gop(&mut self, data: Vec<u8>) -> Result<()> {
         let conn = self
             .cur_connection
@@ -256,7 +290,11 @@ impl ErmisCallEndpoint {
         let (new_gop_notifier, new_gop_watcher) = flume::bounded(1);
         self.new_gop_notifier = new_gop_notifier;
         spawn_local(async move {
-            if let Ok(stream) = conn.open_uni().await {
+            if let Ok(mut stream) = conn.open_uni().await {
+                if let Err(e) = stream.write_all(&[STREAM_KIND_VIDEO]).await {
+                    println!("error writing video stream kind: {}", e);
+                    return;
+                }
                 let mut frame_sender = FramedWrite::new(stream, LengthDelimitedCodec::new());
                 if let Err(e) = frame_sender.send(key_frame).await {
                     println!("error sending key frame: {}", e);

@@ -162,18 +162,51 @@
       display: flex;
       gap: 10px;
       margin-top: 15px;
+      flex-wrap: wrap;
     }
     
     .controls button {
       flex: 1;
+      min-width: 160px;
     }
     
-    #start-dummy {
+    #start-audio {
       background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
     }
     
-    #stop-dummy {
+    #stop-audio {
       background: linear-gradient(135deg, #ee0979 0%, #ff6a00 100%);
+    }
+
+    .endpoint-row {
+      display: flex;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .endpoint-row input {
+      flex: 1;
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+    }
+
+    .status {
+      display: inline-block;
+      margin-top: 12px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      background: #fff5f5;
+      color: #c53030;
+      font-weight: 700;
+    }
+
+    .status.connected {
+      background: #f0fff4;
+      color: #2f855a;
+    }
+
+    #media-tests {
+      display: none;
     }
     
     .time {
@@ -285,17 +318,18 @@
     <main>
       <div class="spawned">
         <div class="section">
-          <h2>Video local</h2>
-          <video id="local-video" autoplay muted playsinline></video>
-        </div>
-
-        <div class="section">
-            <h2>Video remote</h2>
-            <video id="remote-video" autoplay playsinline></video>
+          <h2>Local Endpoint</h2>
+          <p>Open this page in two browser tabs. Copy the address from one tab and connect from the other tab.</p>
+          <div class="endpoint-row">
+            <input id="endpoint-addr" type="text" readonly />
+            <button id="copy-addr" type="button">Copy</button>
+            <button id="accept-incoming" type="button">Accept Incoming</button>
+          </div>
+          <div id="connection-state" class="status">Not connected</div>
         </div>
         
         <div class="section">
-          <h2>🔗 Connect to Peer</h2>
+          <h2>Connect to Peer</h2>
           <form id="connect">
             <input 
               type="text" 
@@ -313,7 +347,7 @@
         </div>
         
         <div class="section">
-          <h2>💬 Send Data</h2>
+          <h2>Control Message</h2>
           <form id="send-data">
             <input 
               type="text" 
@@ -323,26 +357,40 @@
             />
             <button type="submit">Send</button>
           </form>
+        </div>
+
+        <div id="media-tests" class="section">
+          <h2>Audio / Video Stream Tests</h2>
+          <div class="controls">
+            <button id="send-audio" type="button">Send Audio Frame</button>
+            <button id="start-audio" type="button">Start Audio Stream</button>
+            <button id="stop-audio" type="button">Stop Audio Stream</button>
+          </div>
           
           <div class="controls">
-            <button id="start-dummy">▶️ Start Dummy Data</button>
-            <button id="stop-dummy">⏹️ Stop Dummy Data</button>
+            <button id="send-video-keyframe" type="button">Send Video Keyframe</button>
+            <button id="send-video-frame" type="button">Send Video Frame</button>
           </div>
+        </div>
+
+        <div class="section">
+          <h2>Stats</h2>
+          <div id="stats"></div>
         </div>
         
         <div class="section">
-          <h2>📤 Outgoing Messages</h2>
+          <h2>Outgoing Messages</h2>
           <div id="outgoing"></div>
         </div>
         
         <div class="section">
-          <h2>📥 Incoming Messages</h2>
+          <h2>Incoming Messages</h2>
           <div id="incoming"></div>
         </div>
       </div>
     </main>
   </div>
   
-  <script type="module" src="main.js?v=29"></script>
+  <script type="module" src="main.js?v=31"></script>
 </body>
 </html>
